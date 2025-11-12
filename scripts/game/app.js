@@ -14,8 +14,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
   // players
   const player = {
-    ally: {hpTotal:0, hpCurrent:0, ap:3, segmentIndex:3, lastHit:null},
-    enemy:{hpTotal:0, hpCurrent:0, ap:3, segmentIndex:3, lastHit:null}
+    ally: {hpTotal:0, hpCurrent:0, ap:3, segmentIndex:3, lastHit:null, prevSegmentIndex:3},
+    enemy:{hpTotal:0, hpCurrent:0, ap:3, segmentIndex:3, lastHit:null, prevSegmentIndex:3}
   };
 
   // runtime
@@ -36,6 +36,19 @@ document.addEventListener('DOMContentLoaded', ()=>{
   // Dragon displacement state
   let dragonDisplacingPiece = null; // { targetId, originR, originC } when Dragon displaces a piece
 
+  // Universal mechanics state
+  let removedChampions = { ally: [], enemy: [] }; // Track removed pieces for revival
+  let pendingRemovalChoice = null; // { damageDealer, hitTargets[], shouldPromptOpponent } for multi-hit removal
+  let pendingRevival = null; // { playerKey } when player can revive a champion
+  
+  // Lunging Strikes state
+  let lungingState = null; // { fighterId, cycleCount, phase, hitTargets, strengthTargets, strengthIndex } during lunging sequence
+  let lungingLocked = {}; // Track fighters locked from action after lunging: { fighterId: true }
+  
+  // Threshold removal choice
+  let thresholdRemovalPending = null; // { playerKey, attackerId, eligibleVictims[], decider, hitThisCycle[] } when needing to choose which piece is removed
+  let pausedByThresholdChoice = false; // Flag to pause lunging during threshold removal
+  
   /* ---------- UI refs ---------- */
   const boardEl = document.getElementById('board');
   const btnFighter = document.getElementById('btnFighter');
@@ -80,6 +93,9 @@ document.addEventListener('DOMContentLoaded', ()=>{
   const strengthPrompt = document.getElementById('strengthPrompt');
   const btnStrengthYes = document.getElementById('btnStrengthYes');
   const btnStrengthNo = document.getElementById('btnStrengthNo');
+  
+  const revivalPrompt = document.getElementById('revivalPrompt');
+  const revivalChoices = document.getElementById('revivalChoices');
 
   /* ---------- strength passive handlers ---------- */
   btnStrengthYes.addEventListener('click', ()=>{
@@ -103,6 +119,94 @@ document.addEventListener('DOMContentLoaded', ()=>{
     strengthPrompt.style.display = 'none';
     log('Strength not used.');
   });
+
+  /* ---------- revival handlers ---------- */
+  function showRevivalPrompt(playerKey){
+    if(!removedChampions[playerKey] || removedChampions[playerKey].length === 0){
+      log('No removed champions available for revival.');
+      pendingRevival = null;
+      return;
+    }
+    
+    pendingRevival = { playerKey };
+    revivalPrompt.style.display = '';
+    revivalChoices.innerHTML = '';
+    
+    removedChampions[playerKey].forEach((championData, index) => {
+      const btn = document.createElement('button');
+      btn.className = 'small';
+      btn.style.background = '#092532';
+      btn.textContent = `Revive ${championData.id} (${championData.champion}) — HP ${championData.maxHp}`;
+      btn.addEventListener('click', ()=>{
+        reviveChampion(playerKey, index);
+      });
+      revivalChoices.appendChild(btn);
+    });
+  }
+
+  function reviveChampion(playerKey, championIndex){
+    const championData = removedChampions[playerKey][championIndex];
+    if(!championData){
+      log('Champion data not found.');
+      return;
+    }
+    
+    // Create new instance of the champion
+    const Klass = CHAMP_REG[championData.champion];
+    if(!Klass){
+      log(`No class found for ${championData.champion}`);
+      return;
+    }
+    
+    const inst = new Klass();
+    const newId = championData.id; // Reuse the old ID
+    inst.id = newId;
+    inst.player = playerKey;
+    inst.champion = championData.champion;
+    inst.rested = false;
+    inst.acted = false;
+    inst.cooldowns = {};
+    if(inst.currentHp === undefined && inst.maxHp !== undefined) inst.currentHp = inst.maxHp;
+    
+    // Place on first rank
+    const firstRank = playerKey === 'ally' ? 0 : ROWS - 1;
+    const result = relocatePiece(newId, firstRank, Math.floor(COLS / 2), [0, 1, -1]); // Try center, then adjacent
+    
+    if(!result){
+      // If can't place, try any empty spot on the rank
+      for(let c = 0; c < COLS; c++){
+        if(grid[firstRank][c] === null){
+          inst.r = firstRank;
+          inst.c = c;
+          grid[firstRank][c] = newId;
+          pieces[newId] = inst;
+          setupPlaced[playerKey].push(newId);
+          removedChampions[playerKey].splice(championIndex, 1);
+          log(`${newId} (${championData.champion}) revived on ${playerKey === 'ally' ? 'Player 1' : 'Player 2'}'s starting row!`);
+          
+          revivalPrompt.style.display = 'none';
+          pendingRevival = null;
+          render();
+          return;
+        }
+      }
+      log('No space on starting row to revive champion.');
+      return;
+    }
+    
+    // Successfully placed
+    pieces[newId] = inst;
+    setupPlaced[playerKey].push(newId);
+    removedChampions[playerKey].splice(championIndex, 1);
+    log(`${newId} (${championData.champion}) revived on ${playerKey === 'ally' ? 'Player 1' : 'Player 2'}'s starting row!`);
+    
+    revivalPrompt.style.display = 'none';
+    pendingRevival = null;
+    render();
+    
+    // Check if crossing another threshold UP (multiple threshold crossings)
+    checkSegmentation(playerKey);
+  }
 
   /* ---------- helpers ---------- */
   function log(msg){ const d = document.createElement('div'); d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`; logEl.prepend(d); }
@@ -148,6 +252,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
             el.textContent = p.player==='boss' ? '🐉' : (p.champion === 'fighter' ? '⚔' : '🏹'); 
             el.title = `${pid} — ${p.player} — ${p.champion || p.name} — HP ${hpOf(p)}`; 
             if(p.rested){ const ind = document.createElement('div'); ind.className='rest-indicator'; ind.textContent='🛌'; el.appendChild(ind); } 
+            if(p.focused){ const ind = document.createElement('div'); ind.className='focus-indicator'; ind.textContent='🎯'; el.appendChild(ind); } 
             cell.appendChild(el); 
           }
         }
@@ -172,6 +277,14 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
     if (!selectedId || !pieces[selectedId]) return;
     const p = pieces[selectedId];
+    
+    // If this piece is locked from Lunging, hide all action buttons
+    if(p.lungingLocked){
+      // Show a message that the piece is locked
+      log(`${p.id} is locked from actions until the end of this turn.`);
+      return;
+    }
+    
     // Move always available if not rested
     if (!p.rested) btnMove.style.display = '';
     // Show context-sensitive abilities
@@ -235,7 +348,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
         <div style="margin-bottom:6px"><strong>Strike</strong> (1 AP)</div>
         <div style="margin-bottom:8px">2 dmg to adjacent piece, then can use Strength</div>
         <div style="margin-bottom:6px"><strong>Lunging Strikes</strong> (3 AP)</div>
-        <div style="margin-bottom:8px">2 dmg to all adjacent pieces, free move, then can use Strength</div>
+        <div style="margin-bottom:8px">2 dmg to all adjacent, offer Strength to each (1 AP each), then 3 free moves. Locked from actions next turn.</div>
       `;
     } else if (p.champion === 'ranger') {
       abilitiesHTML = `
@@ -407,34 +520,170 @@ document.addEventListener('DOMContentLoaded', ()=>{
       if(p.buff && p.buff.type === 'strength') { dmg += 2; p.buff = null; log('Strengthen buff applied!'); }
       applyDamage(p.id, tid, dmg);
       log(`${p.id} used Strike on ${tid} for ${dmg} dmg. AP left ${player[p.player].ap}`);
+      // If threshold removal is pending, don't clear the action state - let the player choose
+      if(thresholdRemovalPending){ return; }
       clearActionState(); render();
       // Check if target still exists and Strength can be used
       if(pieces[tid] && p.champion === 'fighter'){ showStrengthPrompt(p.id, tid); return; }
       return;
     }
 
-    // LUNGING (fighter)
+    // LUNGING (fighter) - Start of 3-cycle: hit + strength offer + move
     if(activeAction === 'lunging'){
       if(player[p.player].ap < 3){ log('Not enough AP for Lunging Strikes'); clearActionState(); return; }
       player[p.player].ap -= 3;
       p.acted = true;
-      const adj = getAdjIds(p.r,p.c);
+      p.lungingLocked = true; // Lock this fighter from action for their next turn
+      
+      // Initialize lunging state for 3-cycle sequence
+      lungingState = { 
+        fighterId: p.id, 
+        cycleCount: 0, // 0, 1, 2 = up to 3 cycles
+        phase: 'hit' // 'hit' -> 'strength-offer' -> 'move' -> repeat
+      };
+      
+      log(`${p.id} used Lunging Strikes! Cycle 1 of 3...`);
+      
+      // Start first cycle: hit adjacent
+      activeAction = 'lunging-hit';
+      const adj = getAdjIds(p.r, p.c);
       let hitTargets = [];
-      adj.forEach(tid => { if(tid && pieces[tid]){ applyDamage(p.id, tid, 2); hitTargets.push(tid); } });
-      log(`${p.id} used Lunging Strikes (2 dmg to adjacent). Choose free adjacent empty tile to move to.`);
-      activeAction = 'lunging-move'; clearHighlights(); const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[1,-1],[-1,1]]; let hasMove=false; for(const d of dirs){ const nr=p.r+d[0], nc=p.c+d[1]; if(inBounds(nr,nc) && grid[nr][nc]===null){ const el = boardEl.querySelector(`.cell[data-r="${nr}"][data-c="${nc}"]`); if(el) el.classList.add('move'); hasMove=true; } } if(!hasMove){ log('No free tile for lunging move.'); clearActionState(); render(); } else { p.lungingTargets = hitTargets; } return;
+      
+      adj.forEach(tid => { 
+        if(tid && pieces[tid]){ 
+          applyDamage(p.id, tid, 2); 
+          hitTargets.push(tid); 
+        } 
+      });
+      
+      lungingState.hitTargets = hitTargets;
+      lungingState.strengthTargets = hitTargets.filter(tid => pieces[tid]); // Alive targets
+      lungingState.strengthIndex = 0; // Current target for Strength offer
+      
+      log(`Hit ${hitTargets.length} adjacent enemies for 2 damage each.`);
+      render();
+      
+      // Move to Strength offer phase
+      if(lungingState.strengthTargets.length > 0){
+        activeAction = 'lunging-strength-phase';
+        const targetId = lungingState.strengthTargets[0];
+        log(`Offer Strength to ${targetId}? (1 AP to displace) Or click elsewhere to skip.`);
+      } else {
+        activeAction = 'lunging-move-phase';
+        log(`Move phase: Click an empty adjacent tile to move (1 of up to 3), or click elsewhere to skip to next cycle.`);
+        highlightAdjEmpty(p.r, p.c);
+      }
+      return;
     }
 
-    if(activeAction === 'lunging-move'){
-      const cell = boardEl.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
-      if(!cell.classList.contains('move')){ log('Invalid lunging move target'); clearActionState(); return; }
-      grid[p.r][p.c] = null; p.r = r; p.c = c; grid[r][c] = p.id; log(`${p.id} lunged to (${r},${c}).`);
-      // After lunging, offer to use Strength on any hit target
-      if(p.lungingTargets && p.lungingTargets.length > 0){
-        const validTarget = p.lungingTargets.find(tid => pieces[tid]);
-        if(validTarget){ showStrengthPrompt(p.id, validTarget); }
+    // LUNGING - STRENGTH PHASE (offer Strength on each hit target)
+    if(activeAction === 'lunging-strength-phase'){
+      if(!lungingState || lungingState.fighterId !== selectedId){
+        clearActionState();
+        return;
       }
-      clearActionState(); render(); return;
+      
+      const targetId = lungingState.strengthTargets[lungingState.strengthIndex];
+      
+      // If player clicked the target, use Strength on it
+      if(grid[r][c] === targetId && pieces[targetId]){
+        if(player[p.player].ap < 1){
+          log('Not enough AP for Strength (1 AP required)');
+          return;
+        }
+        player[p.player].ap -= 1;
+        log(`${p.id} used Strength (1 AP): displacing ${targetId}...`);
+        activeAction = 'strength-displace';
+        highlightAdjEmpty(pieces[targetId].r, pieces[targetId].c);
+        strengthPending = { attackerId: p.id, targetId: targetId, isLungingStrength: true };
+        log('Click an adjacent empty tile to displace the enemy.');
+        return;
+      }
+      
+      // Otherwise, skip Strength for this target
+      lungingState.strengthIndex++;
+      
+      if(lungingState.strengthIndex < lungingState.strengthTargets.length){
+        const nextTargetId = lungingState.strengthTargets[lungingState.strengthIndex];
+        log(`Strength skipped. Next target: ${nextTargetId}? (1 AP) Or skip to move phase.`);
+        return;
+      }
+      
+      // All Strength offers done, move to move phase
+      activeAction = 'lunging-move-phase';
+      log(`Move phase: Click an empty adjacent tile to move (1 of up to 3), or click elsewhere to finish this cycle.`);
+      clearHighlights();
+      highlightAdjEmpty(p.r, p.c);
+      return;
+    }
+
+    // LUNGING - MOVE PHASE (one free move per cycle)
+    if(activeAction === 'lunging-move-phase'){
+      if(!lungingState || lungingState.fighterId !== selectedId){
+        clearActionState();
+        return;
+      }
+      
+      const cell = boardEl.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`);
+      
+      if(cell && cell.classList.contains('move')){
+        // Perform move
+        grid[p.r][p.c] = null;
+        p.r = r;
+        p.c = c;
+        grid[r][c] = p.id;
+        
+        lungingState.cycleCount++;
+        log(`${p.id} moved to (${r},${c}). Cycle ${lungingState.cycleCount} complete.`);
+        
+        if(lungingState.cycleCount < 3){
+          // More cycles available - restart the sequence
+          log(`Cycle ${lungingState.cycleCount + 1} of 3...`);
+          activeAction = 'lunging-hit';
+          const adj = getAdjIds(p.r, p.c);
+          let hitTargets = [];
+          
+          adj.forEach(tid => { 
+            if(tid && pieces[tid]){ 
+              applyDamage(p.id, tid, 2); 
+              hitTargets.push(tid); 
+            } 
+          });
+          
+          lungingState.hitTargets = hitTargets;
+          lungingState.strengthTargets = hitTargets.filter(tid => pieces[tid]);
+          lungingState.strengthIndex = 0;
+          
+          log(`Hit ${hitTargets.length} adjacent enemies for 2 damage each.`);
+          render();
+          
+          if(lungingState.strengthTargets.length > 0){
+            activeAction = 'lunging-strength-phase';
+            const targetId = lungingState.strengthTargets[0];
+            log(`Offer Strength to ${targetId}? (1 AP to displace) Or click elsewhere to skip.`);
+          } else {
+            activeAction = 'lunging-move-phase';
+            log(`Move phase: Click an empty adjacent tile to move, or click elsewhere to skip to next cycle.`);
+            clearHighlights();
+            highlightAdjEmpty(p.r, p.c);
+          }
+          return;
+        } else {
+          // 3 cycles complete
+          log(`Lunging Strikes complete!`);
+          lungingState = null;
+          clearActionState();
+          render();
+          return;
+        }
+      }
+      
+      // Invalid click or intentional exit - finish lunging
+      log(`Lunging Strikes complete!`);
+      lungingState = null;
+      clearActionState();
+      render();
+      return;
     }
 
     // QUICK (ranger)
@@ -444,7 +693,10 @@ document.addEventListener('DOMContentLoaded', ()=>{
       const isValidTarget = isQueenAccessible(pieces[selectedId].r, pieces[selectedId].c, r, c, range);
       if(!isValidTarget || !cell.classList.contains('attack')){ log('Invalid Quick Shot target'); clearActionState(); return; }
       if(player[p.player].ap < 1){ log('Not enough AP for Quick Shot'); clearActionState(); return; }
-      player[p.player].ap -= 1; p.acted = true; const tid = grid[r][c]; applyDamage(p.id, tid, 1); log(`${p.id} Quick Shot ${tid} for 1 dmg. AP left ${player[p.player].ap}`); clearActionState(); render(); return;
+      player[p.player].ap -= 1; p.acted = true; const tid = grid[r][c]; applyDamage(p.id, tid, 1); log(`${p.id} Quick Shot ${tid} for 1 dmg. AP left ${player[p.player].ap}`);
+      // If threshold removal is pending, don't clear the action state - let the player choose
+      if(thresholdRemovalPending){ return; }
+      clearActionState(); render(); return;
     }
 
     // BULLSEYE (ranger)
@@ -456,7 +708,10 @@ document.addEventListener('DOMContentLoaded', ()=>{
       if(player[p.player].ap < bullSpend){ log('Not enough AP for Bullseye'); clearActionState(); return; }
       p.cooldowns = p.cooldowns || {};
       if(p.cooldowns.bullseye > 0){ log('Bullseye is on cooldown!'); clearActionState(); return; }
-      player[p.player].ap -= bullSpend; p.acted = true; const tid = grid[r][c]; applyDamage(p.id, tid, 2 * bullSpend); p.cooldowns.bullseye = 1; log(`${p.id} used Bullseye on ${tid} for ${2*bullSpend} dmg (spent ${bullSpend} AP, range ${range}).`); clearActionState(); render(); return;
+      player[p.player].ap -= bullSpend; p.acted = true; const tid = grid[r][c]; applyDamage(p.id, tid, 2 * bullSpend); p.cooldowns.bullseye = 1; log(`${p.id} used Bullseye on ${tid} for ${2*bullSpend} dmg (spent ${bullSpend} AP, range ${range}).`);
+      // If threshold removal is pending, don't clear the action state - let the player choose
+      if(thresholdRemovalPending){ return; }
+      clearActionState(); render(); return;
     }
 
     // STRENGTH DISPLACE (fighter passive)
@@ -467,14 +722,121 @@ document.addEventListener('DOMContentLoaded', ()=>{
       if(!strengthPending){ log('No target to displace.'); clearActionState(); render(); return; }
       const target = pieces[strengthPending.targetId];
       if(!target){ log('Target no longer exists.'); clearActionState(); render(); return; }
+      
+      // Validate target is still where we think it is
+      if(!inBounds(target.r, target.c) || grid[target.r][target.c] !== target.id){
+        log(`ERROR: Target position mismatch. Expected (${target.r},${target.c}) but grid has ${grid[target.r]?.[target.c]}`);
+        clearActionState();
+        render();
+        return;
+      }
+      
+      // Validate destination is empty
+      if(grid[r][c] !== null){
+        log(`ERROR: Destination (${r},${c}) is not empty! Contains: ${grid[r][c]}`);
+        clearActionState();
+        render();
+        return;
+      }
+      
       // Displace target
       grid[target.r][target.c] = null;
       target.r = r;
       target.c = c;
       grid[r][c] = target.id;
       log(`${strengthPending.attackerId} displaced ${target.id} to (${r},${c}).`);
+      
+      const wasLungingStrength = strengthPending.isLungingStrength;
       strengthPending = null;
       strengthPrompt.style.display = 'none';
+      
+      // If this was a Strength during Lunging, transition back to Strength offer phase for next target
+      if(wasLungingStrength && lungingState){
+        lungingState.strengthIndex++;
+        const p = pieces[lungingState.fighterId];
+        
+        if(!p){
+          log('ERROR: Lunging fighter no longer exists!');
+          lungingState = null;
+          clearActionState();
+          render();
+          return;
+        }
+        
+        if(lungingState.strengthIndex < lungingState.strengthTargets.length){
+          const nextTargetId = lungingState.strengthTargets[lungingState.strengthIndex];
+          log(`Strength applied! Next target: ${nextTargetId}? (1 AP) Or skip to move phase.`);
+          activeAction = 'lunging-strength-phase';
+          clearHighlights();
+          render();
+          return;
+        }
+        
+        // All Strength offers done, move to move phase
+        log(`Move phase: Click an empty adjacent tile to move (1 of up to 3), or click elsewhere to finish this cycle.`);
+        activeAction = 'lunging-move-phase';
+        clearHighlights();
+        highlightAdjEmpty(p.r, p.c);
+        render();
+        return;
+      }
+      
+      // Regular Strength (not during lunging)
+      clearActionState();
+      render();
+      return;
+    }
+
+    // THRESHOLD REMOVAL CHOICE (attacker chooses which piece to remove after hit target)
+    if(activeAction === 'threshold-removal-choice'){
+      if(!thresholdRemovalPending){
+        clearActionState();
+        render();
+        return;
+      }
+      
+      const clickedId = grid[r][c];
+      
+      // Check if clicked piece is eligible for removal
+      if(!clickedId || !thresholdRemovalPending.eligibleVictims.includes(clickedId)){
+        log('Click on an eligible piece to remove it (highlighted in red).');
+        return;
+      }
+      
+      // Check if the correct player is making this decision
+      const deciderIsPlayer = thresholdRemovalPending.decider === thresholdRemovalPending.playerKey;
+      const deciderIsAttacker = thresholdRemovalPending.decider === thresholdRemovalPending.attackerId;
+      
+      if(deciderIsPlayer){
+        // Defender is choosing
+        if(currentActor !== thresholdRemovalPending.playerKey){
+          log('Only the defending player can choose which piece is removed.');
+          return;
+        }
+      } else if(deciderIsAttacker){
+        // Attacker is choosing
+        const attacker = pieces[thresholdRemovalPending.attackerId];
+        if(!attacker || currentActor !== attacker.player){
+          log('Only the damage dealer can choose which piece is removed.');
+          return;
+        }
+      }
+      
+      // Remove the chosen piece
+      log(`${clickedId} has been removed due to threshold crossing.`);
+      deletePiece(clickedId);
+      
+      const playerKey = thresholdRemovalPending.playerKey;
+      const attackerId = thresholdRemovalPending.attackerId;
+      const targetIndex = thresholdRemovalPending.targetIndex;
+      const finalIndex = thresholdRemovalPending.finalIndex;
+      thresholdRemovalPending = null;
+      
+      // Update segment to the actual final segment (where we ended up)
+      player[playerKey].segmentIndex = finalIndex;
+      
+      // After attacker's choice, removal is complete
+      // The hit piece + chosen piece removal satisfies the threshold crossing requirement
       clearActionState();
       render();
       return;
@@ -523,64 +885,207 @@ document.addEventListener('DOMContentLoaded', ()=>{
       clearActionState();
       render();
       
-      // Now advance to next turn
-      currentStepIndex = (currentStepIndex + 1) % cycle.length;
-      currentActor = cycle[currentStepIndex];
-      log(`After Dragon displacement, it is now ${currentActor === 'ally' ? 'Player 1' : 'Player 2'}'s turn.`);
-      
-      // Reset pieces for the next actor
-      if(currentActor === 'ally' || currentActor === 'enemy'){
-        const pk = currentActor;
-        for(const id in pieces){
-          if(pieces[id].player === pk){
-            pieces[id].rested = false;
-            pieces[id].acted = false;
-            // Apply focused state if this ranger was set to focus last turn
-            if(focusedRangerId === id && pieces[id].champion === 'ranger'){
-              pieces[id].focused = true;
-              log(`${id} is focused! Ability ranges are doubled this turn.`);
-              focusedRangerId = null;
-            } else {
-              pieces[id].focused = false;
-            }
-            // Decrement cooldowns
-            if(pieces[id].cooldowns){
-              for(const key in pieces[id].cooldowns){
-                if(pieces[id].cooldowns[key] > 0) pieces[id].cooldowns[key]--;
-              }
-            }
-            // Remove expired buffs
-            if(pieces[id].buff && pieces[id].buff.turns){
-              pieces[id].buff.turns--;
-              if(pieces[id].buff.turns <= 0) pieces[id].buff = null;
-            }
-          }
-        }
-      }
-      render();
+      // After placement, the auto-advance timeout will handle turn advancement
+      // This ensures Dragon displacement doesn't interfere with the auto-advance flow
       return;
     }
   }
 
   function getAdjIds(r,c){ const out=[]; const dirs=[[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]; for(const d of dirs){ const nr=r+d[0], nc=c+d[1]; if(inBounds(nr,nc)) out.push(grid[nr][nc]); } return out; }
 
-  function applyDamage(attackerId, targetId, dmg){ const attacker = pieces[attackerId]; const target = pieces[targetId]; if(!target) return; if(target.player === 'boss'){ target.currentHp = (target.currentHp || target.maxHp) - dmg; log(`${attackerId} did ${dmg} to Dragon (HP ${target.currentHp})`); if(target.currentHp <= 0){ log('Dragon died!'); deletePiece(target.id); } return; } target.currentHp = (target.currentHp || target.maxHp) - dmg; player[target.player].hpCurrent = Math.max(0, player[target.player].hpCurrent - dmg); player[target.player].lastHit = attackerId; log(`${attackerId} hit ${targetId} for ${dmg}. ${targetId} HP=${target.currentHp}. Owner pool ${player[target.player].hpCurrent}`); if(target.currentHp <= 0){ log(`${targetId} died.`); deletePiece(targetId); player[target.player].ap = Math.min(MAX_AP, player[target.player].ap + 1); log(`${target.player === 'ally' ? 'Player1' : 'Player2'} gained +1 AP (Avengement).`); } checkSegmentation(target.player); }
+  function applyDamage(attackerId, targetId, dmg){ 
+    const attacker = pieces[attackerId]; 
+    const target = pieces[targetId]; 
+    if(!target) return; 
+    
+    // Apply Desperation damage multiplier: 2x damage to Dragon when attacker is in Desperation
+    if(target.player === 'boss' && attacker){
+      const attackerPlayer = attacker.player;
+      const playerAlive = setupPlaced[attackerPlayer].filter(id => pieces[id]).length;
+      if(playerAlive === 1) dmg *= 2; // Desperation: double damage to boss
+    }
+    
+    if(target.player === 'boss'){ 
+      target.currentHp = (target.currentHp || target.maxHp) - dmg; 
+      log(`${attackerId} did ${dmg} to Dragon (HP ${target.currentHp})`); 
+      if(target.currentHp <= 0){ 
+        log('Dragon died!'); 
+        deletePiece(target.id); 
+      } 
+      return; 
+    } 
+    
+    target.currentHp = (target.currentHp || target.maxHp) - dmg; 
+    player[target.player].hpCurrent = Math.max(0, player[target.player].hpCurrent - dmg); 
+    player[target.player].lastHit = attackerId; 
+    log(`${attackerId} hit ${targetId} for ${dmg}. ${targetId} HP=${target.currentHp}. Owner pool ${player[target.player].hpCurrent}`); 
+    
+    if(target.currentHp <= 0){ 
+      log(`${targetId} died.`); 
+      deletePiece(targetId); 
+      player[target.player].ap = Math.min(MAX_AP, player[target.player].ap + 1); 
+      log(`${target.player === 'ally' ? 'Player1' : 'Player2'} gained +1 AP (Avengement).`); 
+    } 
+    checkSegmentation(target.player, attackerId, targetId); 
+  }
 
   function deletePiece(id){ 
     if(!pieces[id]) return; 
     const p = pieces[id]; 
+    
+    // Track removed champion for potential revival
+    const championData = {
+      id,
+      champion: p.champion,
+      maxHp: p.maxHp || 20,
+      player: p.player
+    };
+    removedChampions[p.player].push(championData);
+    log(`${id} (${p.champion}) removed. Available for revival if threshold crossed.`);
+    
     // Only clear grid if piece position is in bounds and points to this piece
     if(inBounds(p.r, p.c) && grid[p.r][p.c] === id) {
       grid[p.r][p.c] = null;
     }
     delete pieces[id]; 
-    setupPlaced.ally = setupPlaced.ally.filter(x=>x!==id); 
-    setupPlaced.enemy = setupPlaced.enemy.filter(x=>x!==id); 
+    setupPlaced[p.player] = setupPlaced[p.player].filter(x=>x!==id); 
     if(selectedId === id) selectedId = null; 
     render(); 
   }
 
-  function checkSegmentation(playerKey){ const total = player[playerKey].hpTotal || 0; if(total === 0) return; const seg = Math.floor(total / 3); const thresholds = [0, seg, seg*2, seg*3]; if(player[playerKey].segmentIndex === undefined) player[playerKey].segmentIndex = 3; let newIndex = 3; const cur = player[playerKey].hpCurrent; if(cur <= thresholds[1]) newIndex = 1; else if(cur <= thresholds[2]) newIndex = 2; else newIndex = 3; if(newIndex < player[playerKey].segmentIndex){ const victim = player[playerKey].lastHit; if(victim && pieces[victim] && pieces[victim].player === playerKey){ log(`Threshold crossed — removing last-hit champion ${victim}`); deletePiece(victim); } else { log('Threshold crossed but no last-hit champion to remove.'); } player[playerKey].segmentIndex = newIndex; } }
+  function checkSegmentation(playerKey, attackerId, targetId){ 
+    const total = player[playerKey].hpTotal || 0; 
+    if(total === 0) return; 
+    const seg = Math.floor(total / 3);
+    // Thresholds are the HP values: seg (lower threshold) and seg*2 (upper threshold)
+    if(player[playerKey].segmentIndex === undefined) player[playerKey].segmentIndex = 3;
+    
+    const cur = player[playerKey].hpCurrent;
+    let newIndex = 3; // Default to full health segment
+    
+    // Determine which segment the player is in based on current HP
+    if(cur <= seg) newIndex = 1; // Below lower threshold
+    else if(cur <= seg * 2) newIndex = 2; // Between thresholds
+    else newIndex = 3; // Above upper threshold (full health)
+    
+    const oldIndex = player[playerKey].segmentIndex;
+    log(`DEBUG checkSegmentation: ${playerKey} | total=${total} seg=${seg} cur=${cur} oldIndex=${oldIndex} newIndex=${newIndex} removed=${removedChampions[playerKey].length}`);
+    
+    // CROSSING DOWN: Handle one threshold crossing at a time
+    if(newIndex < oldIndex){ 
+      // Process only the next immediate threshold (oldIndex - 1)
+      const targetIndex = oldIndex - 1;
+      const eligible = setupPlaced[playerKey].filter(id => pieces[id]);
+      
+      if(eligible.length === 0){
+        log('No more pieces to remove.');
+        player[playerKey].segmentIndex = newIndex;
+        return;
+      }
+      
+      if(eligible.length === 1){
+        // Only one piece - remove it automatically
+        log(`Threshold crossed — removing piece ${eligible[0]}`);
+        deletePiece(eligible[0]);
+        player[playerKey].segmentIndex = targetIndex;
+        
+        // Recursively check for next threshold
+        if(targetIndex > newIndex){
+          checkSegmentation(playerKey, attackerId);
+        }
+        return;
+      }
+      
+      // Multiple eligible pieces
+      // Calculate HP that needs to be removed: current total - remaining HP
+      const hpToRemove = total - cur;
+      
+      // The hit target may already be dead (removed during applyDamage)
+      // So we ask the attacker to choose which other piece gets removed
+      // UNLESS the attacker is the Dragon, in which case the defender chooses
+      
+      const attacker = pieces[attackerId];
+      const isDragonAttack = attacker && attacker.player === 'boss';
+      const decider = isDragonAttack ? playerKey : attackerId;
+      const deciderName = isDragonAttack ? (playerKey === 'ally' ? 'Player 1' : 'Player 2') : (attacker ? attacker.id : 'Damage dealer');
+      
+      log(`Threshold crossed. ${deciderName}: Click on a highlighted piece to remove it.`);
+      
+      thresholdRemovalPending = {
+        playerKey,
+        attackerId: attackerId,
+        eligibleVictims: eligible,
+        decider: decider,
+        targetIndex: targetIndex,
+        finalIndex: newIndex,
+        hpToRemove: hpToRemove
+      };
+      
+      activeAction = 'threshold-removal-choice';
+      render();
+      
+      clearHighlights();
+      eligible.forEach(id => {
+        const p = pieces[id];
+        if(inBounds(p.r, p.c)){
+          const cell = boardEl.querySelector(`.cell[data-r="${p.r}"][data-c="${p.c}"]`);
+          if(cell) cell.classList.add('attack');
+        }
+      });
+    }
+    
+    // CROSSING UP: Enable revival if moving to a HIGHER segment
+    if(newIndex > oldIndex){
+      log(`DEBUG: Crossing UP detected! oldIndex=${oldIndex} newIndex=${newIndex}`);
+      // Check if we crossed any thresholds going up
+      // Threshold 1: seg (e.g., 4 HP)
+      // Threshold 2: seg*2 (e.g., 8 HP)
+      
+      // Did we cross the lower threshold (seg)?
+      const crossedLower = oldIndex < 2 && newIndex >= 2; // Going from segment 1 to 2+
+      // Did we cross the upper threshold (seg*2)?
+      const crossedUpper = oldIndex < 3 && newIndex >= 3; // Going from segment 1-2 to 3
+      
+      log(`DEBUG: crossedLower=${crossedLower} crossedUpper=${crossedUpper} removed.length=${removedChampions[playerKey].length}`);
+      
+      // Offer revival for each threshold crossed
+      if(crossedLower && removedChampions[playerKey].length > 0){
+        log(`${playerKey === 'ally' ? 'Player 1' : 'Player 2'} crossed threshold upward! Champion revival available.`);
+        showRevivalPrompt(playerKey);
+        log(`DEBUG: Called showRevivalPrompt, pendingRevival now = ${JSON.stringify(pendingRevival)}`);
+        // Update to segment 2 (crossed lower threshold)
+        player[playerKey].segmentIndex = 2;
+        return;
+      }
+      if(!crossedLower && crossedLower === false){
+        log(`DEBUG: crossedLower is false, skipping lower threshold revival`);
+      }
+      if(removedChampions[playerKey].length === 0){
+        log(`DEBUG: No removed champions available for revival`);
+      }
+      
+      if(crossedUpper && removedChampions[playerKey].length > 0){
+        log(`${playerKey === 'ally' ? 'Player 1' : 'Player 2'} crossed threshold upward! Champion revival available.`);
+        showRevivalPrompt(playerKey);
+        // Update to segment 3 (crossed upper threshold)
+        player[playerKey].segmentIndex = 3;
+        return;
+      }
+      
+      // If no revivals available, update to new segment
+      player[playerKey].segmentIndex = newIndex;
+      return;
+    }
+    
+    // No crossing - update segment if needed
+    player[playerKey].segmentIndex = newIndex;
+    
+    // Check for Desperation: 1 champion remaining
+    const aliveCount = setupPlaced[playerKey].filter(id => pieces[id]).length;
+    if(aliveCount === 1){
+      log(`${playerKey === 'ally' ? 'Player 1' : 'Player 2'} is now in DESPERATION! +1 AP/turn, 2x damage to boss.`);
+    }
+  }
 
   /* ---------- ui action bindings ---------- */
   btnMove.addEventListener('click', ()=>{
@@ -631,11 +1136,10 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if(p.player !== currentActor){ log('Not current actor piece'); return; }
     if(p.rested){ log('This piece is rested'); return; }
     if(p.champion === 'fighter'){
-      // Lunging Strikes: 3 AP, 2 dmg to all adjacent, then free adjacent move
+      // Lunging Strikes: 3 AP, 2 dmg to all adjacent, then Strength offers, then 3 free moves
       if(player[p.player].ap < 3){ log('Not enough AP for Lunging Strikes'); return; }
       activeAction = 'lunging';
-      highlightAdjEnemies(selectedId);
-      log('Lunging Strikes: confirm to damage all adjacent (2 dmg), then free adjacent move');
+      log('Lunging Strikes: 2 damage to all adjacent, then Strength offers, then 3 free adjacent moves. Fighter locked from actions next turn.');
     } else if(p.champion === 'ranger'){
       // Quick Shot: 1 AP, 1 dmg, range 3 or 6 if focused
       if(player[p.player].ap < 1){ log('Not enough AP for Quick Shot'); return; }
@@ -703,6 +1207,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if(p.player !== currentActor){ log('Can only rest on your turn'); return; }
     if(p.rested){ log('This piece already rested'); return; }
     if(p.acted){ log('Cannot rest: piece has already acted this turn'); return; }
+    if(p.lungingLocked){ log('This piece is locked from all actions due to Lunging Strikes'); return; }
     p.rested = true;
     // Store pending rest rewards to be applied at end of turn
     pendingRestRewards[p.id] = { ap: 1, hp: 1 };
@@ -807,6 +1312,31 @@ document.addEventListener('DOMContentLoaded', ()=>{
   btnEndTurn.addEventListener('click', ()=>{
     if(phase === 'setup'){ if(setupPlaced.ally.length !== 3 || setupPlaced.enemy.length !== 3){ log('Both players must place 3 champions to start.'); return; } phase = 'inprogress'; currentStepIndex = 0; currentActor = cycle[currentStepIndex]; log('Game begins. Player 1 (ally) goes first.'); render(); return; }
     
+    // CLEAR LUNGING LOCK: If the current actor had any pieces with lungingLocked, clear the flag now (their "locked turn" has passed)
+    if(currentActor === 'ally' || currentActor === 'enemy'){
+      const playerKey = currentActor;
+      for(const id in pieces){
+        const p = pieces[id];
+        if(p.player === playerKey && p.lungingLocked){
+          p.lungingLocked = false;
+          log(`${id}'s Lunging Strikes lock has expired — able to act next turn.`);
+        }
+      }
+    }
+    
+    // AUTO-REST: Before advancing turn, auto-rest all pieces of current player that didn't act
+    if(currentActor === 'ally' || currentActor === 'enemy'){
+      const playerKey = currentActor;
+      for(const id in pieces){
+        const p = pieces[id];
+        if(p.player === playerKey && !p.acted && !p.rested){
+          p.rested = true;
+          pendingRestRewards[p.id] = { ap: 1, hp: 1 };
+          log(`${p.id} auto-rested — owner will gain +1 AP & +1 HP`);
+        }
+      }
+    }
+    
     // Apply pending rest rewards before advancing turn
     for(const id in pendingRestRewards){
       const piece = pieces[id];
@@ -815,13 +1345,37 @@ document.addEventListener('DOMContentLoaded', ()=>{
         player[piece.player].ap = Math.min(MAX_AP, player[piece.player].ap + reward.ap);
         player[piece.player].hpCurrent = Math.min(player[piece.player].hpTotal, player[piece.player].hpCurrent + reward.hp);
         log(`${id}'s rest completed — owner gained +${reward.ap} AP & +${reward.hp} HP (AP now ${player[piece.player].ap})`);
+        
+        // Check if this player's HP crossed a threshold (handles both down and up crossings)
+        checkSegmentation(piece.player);
       }
     }
     pendingRestRewards = {};
     
+    // DESPERATION: If current player has 1 champion, gain +1 AP at end of turn
+    if(currentActor === 'ally' || currentActor === 'enemy'){
+      const aliveCount = setupPlaced[currentActor].filter(id => pieces[id]).length;
+      if(aliveCount === 1){
+        player[currentActor].ap = Math.min(MAX_AP, player[currentActor].ap + 1);
+        log(`${currentActor === 'ally' ? 'Player 1' : 'Player 2'} gained +1 AP (Desperation).`);
+      }
+    }
+    
     // Don't advance the turn yet if Dragon displacement is pending
     if(activeAction === 'dragon-displace'){
       log('Cannot end turn while waiting for player to choose Dragon displacement...');
+      return;
+    }
+    
+    // Don't advance the turn yet if threshold removal choice is pending
+    if(activeAction === 'threshold-removal-choice'){
+      log('Cannot end turn while waiting for damage dealer to choose which piece to remove...');
+      return;
+    }
+    
+    // Don't advance the turn yet if revival is pending
+    if(pendingRevival){
+      log('Cannot end turn while waiting for revival choice...');
       return;
     }
     
@@ -831,8 +1385,16 @@ document.addEventListener('DOMContentLoaded', ()=>{
       for(const id in pieces){
         const p = pieces[id];
         if(p.player === playerKey){
-          p.rested = false;
-          p.acted = false;
+          // Check if this piece is locked from Lunging Strikes (used last turn, must skip this turn)
+          if(p.lungingLocked){
+            p.rested = true;
+            p.acted = true;
+            log(`${id} is locked from action due to Lunging Strikes — skipping this turn.`);
+            // Don't clear the flag yet; it will be cleared at the END of this turn
+          } else {
+            p.rested = false;
+            p.acted = false;
+          }
           // Apply focused state if this ranger was set to focus last turn
           if(focusedRangerId === id && p.champion === 'ranger'){
             p.focused = true;
@@ -860,6 +1422,63 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if(currentActor === 'boss'){
       setTimeout(()=>{
         bossAct();
+        
+        // AUTO-ADVANCE: After Dragon finishes its action, automatically advance to next turn
+        // (unless there's a pending displacement or revival that requires player input)
+        setTimeout(()=>{
+          if(activeAction === 'dragon-displace'){
+            log('Dragon displacement pending — waiting for player choice...');
+            return;
+          }
+          if(pendingRevival){
+            log('Revival pending — waiting for player choice...');
+            return;
+          }
+          log('Dragon turn auto-advancing to next actor...');
+          // Trigger end turn logic automatically
+          currentStepIndex = (currentStepIndex + 1) % cycle.length;
+          currentActor = cycle[currentStepIndex];
+          log(`Turn advanced to ${currentActor === 'ally' ? 'Player 1' : (currentActor === 'enemy' ? 'Player 2' : 'Dragon')}`);
+          
+          if(currentActor === 'ally' || currentActor === 'enemy'){
+            const playerKey = currentActor;
+            for(const id in pieces){
+              const p = pieces[id];
+              if(p.player === playerKey){
+                // Check if this piece is locked from Lunging Strikes (used last turn, must skip this turn)
+                if(p.lungingLocked){
+                  p.rested = true;
+                  p.acted = true;
+                  log(`${id} is locked from action due to Lunging Strikes — skipping this turn.`);
+                  // Don't clear the flag yet; it will be cleared at the END of this turn
+                } else {
+                  p.rested = false;
+                  p.acted = false;
+                }
+                // Apply focused state if this ranger was set to focus last turn
+                if(focusedRangerId === id && p.champion === 'ranger'){
+                  p.focused = true;
+                  log(`${p.id} is focused! Ability ranges are doubled this turn.`);
+                  focusedRangerId = null;
+                } else {
+                  p.focused = false;
+                }
+                // Decrement cooldowns (e.g., Bullseye)
+                if(p.cooldowns){
+                  for(const key in p.cooldowns){
+                    if(p.cooldowns[key] > 0) p.cooldowns[key]--;
+                  }
+                }
+                // Remove expired buffs
+                if(p.buff && p.buff.turns){
+                  p.buff.turns--;
+                  if(p.buff.turns <= 0) p.buff = null;
+                }
+              }
+            }
+          }
+          render();
+        }, 100); // Small delay to ensure bossAct completes fully
       }, 450);
     }
   });

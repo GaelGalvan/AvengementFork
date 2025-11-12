@@ -11,20 +11,21 @@
     --attack-red: rgba(255,155,107,0.22);
     --valid: rgba(255,255,255,0.03);
   }
-  html,body{height:100%;margin:0;font-family:Inter,Segoe UI,Roboto,system-ui,-apple-system,Segoe UI Emoji;background:linear-gradient(180deg,var(--bg),#05202a);color:#e6eef3;display:flex;align-items:stretch}
-  .sidebar{width:360px;padding:16px;background:#071522;border-right:1px solid rgba(255,255,255,0.03);display:flex;flex-direction:column;gap:12px;box-sizing:border-box}
-  .main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:18px;gap:12px}
+  html,body{height:100%;margin:0;font-family:Inter,Segoe UI,Roboto,system-ui,-apple-system,Segoe UI Emoji;background:linear-gradient(180deg,var(--bg),#05202a);color:#e6eef3;display:flex;align-items:stretch;justify-content:space-between}
+  .sidebar{width:360px;flex-shrink:0;padding:16px;background:#071522;border-right:1px solid rgba(255,255,255,0.03);display:flex;flex-direction:column;gap:12px;box-sizing:border-box;overflow-y:auto}
+  .main{flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px;gap:12px}
   h1{margin:0;font-size:18px}
-  .board { display:grid; grid-template-columns:repeat(7,80px); grid-template-rows:repeat(7,80px); gap:var(--grid-gap); padding:12px; background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border-radius:12px; box-shadow:0 8px 28px rgba(0,0,0,0.6); }
-  .cell{ width:80px;height:80px;background:var(--cell);border-radius:8px;display:flex;align-items:center;justify-content:center;position:relative;user-select:none;cursor:pointer; transition:transform .08s; }
+  .board { display:grid; grid-template-columns:repeat(7,120px); grid-template-rows:repeat(7,120px); gap:var(--grid-gap); padding:12px; background:linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.01)); border-radius:12px; box-shadow:0 8px 28px rgba(0,0,0,0.6); }
+  .cell{ width:120px;height:120px;background:var(--cell);border-radius:8px;display:flex;align-items:center;justify-content:center;position:relative;user-select:none;cursor:pointer; transition:transform .08s; }
   .cell:hover{ transform:translateY(-2px) }
   .cell.occupied{ cursor:pointer }
-  .piece{ width:44px;height:44px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;color:#041019;box-shadow:0 6px 18px rgba(0,0,0,0.6);position:relative;font-size:18px }
+  .piece{ width:64px;height:64px;border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:700;color:#041019;box-shadow:0 6px 18px rgba(0,0,0,0.6);position:relative;font-size:24px }
   .piece.ally{ background:var(--ally) }
   .piece.enemy{ background:var(--enemy) }
-  .piece.boss{ background:var(--boss); width:56px;height:56px;border-radius:10px;font-size:20px }
+  .piece.boss{ background:var(--boss); width:80px;height:80px;border-radius:10px;font-size:28px }
   .piece.selected{ outline:3px solid rgba(255,255,255,0.06); transform:translateY(-6px) }
   .rest-indicator{ position:absolute; right:-6px; top:-8px; font-size:12px; background:rgba(0,0,0,0.45); padding:2px 6px; border-radius:8px; color:#fff }
+  .focus-indicator{ position:absolute; left:-6px; top:-8px; font-size:12px; background:rgba(255,165,0,0.6); padding:2px 6px; border-radius:8px; color:#fff }
 
   .cell.move { box-shadow:0 0 0 4px var(--move-blue) inset }
   .cell.attack { box-shadow:0 0 0 4px var(--attack-red) inset }
@@ -38,7 +39,7 @@
   .ability-btn.active{ outline:2px solid rgba(102,217,255,0.12); background:linear-gradient(180deg,#092532,#071c2b) }
   input[type=number]{ width:72px; padding:6px; border-radius:6px; border:1px solid rgba(255,255,255,0.06); background:transparent; color:#eaf6ff }
   .log{ background:rgba(255,255,255,0.02); padding:10px; border-radius:8px; min-height:120px; overflow:auto; font-size:13px }
-  #rightSidebar{ width:360px; padding:16px; background:#071522; border-left:1px solid rgba(255,255,255,0.03); display:flex; flex-direction:column; gap:12px; box-sizing:border-box; overflow-y:auto; }
+  #rightSidebar{ width:360px; flex-shrink:0; padding:16px; background:#071522; border-left:1px solid rgba(255,255,255,0.03); display:flex; flex-direction:column; gap:12px; box-sizing:border-box; overflow-y:auto; }
 </style>
 </head>
 <body>
@@ -157,6 +158,11 @@
           <button id="btnStrengthYes" class="small" style="flex:1;background:#092532">Yes (1 AP)</button>
           <button id="btnStrengthNo" class="small" style="flex:1;background:#2a0000">No</button>
         </div>
+      </div>
+      <div id="revivalPrompt" class="panel" style="display:none">
+        <div style="margin-bottom:8px"><strong style="color:#66d9ff">Revival Available!</strong></div>
+        <div class="muted" style="margin-bottom:8px;font-size:12px">You crossed a threshold upward! Choose a removed champion to revive on your starting row.</div>
+        <div id="revivalChoices" style="display:flex;flex-direction:column;gap:6px"></div>
       </div>
     </div>
   </aside>
