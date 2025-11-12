@@ -1,6 +1,7 @@
 (function(){
 function Fighter(){
 Champion.call(this, 'Fighter', 7);
+	this.move = 2;
 }
 Fighter.prototype = Object.create(Champion.prototype);
 Fighter.prototype.constructor = Fighter;

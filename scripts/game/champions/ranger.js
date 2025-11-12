@@ -2,6 +2,7 @@
 (function(){
 function Ranger(){
 Champion.call(this, 'Ranger', 4);
+	this.move = 1;
 }
 Ranger.prototype = Object.create(Champion.prototype);
 Ranger.prototype.constructor = Ranger;
