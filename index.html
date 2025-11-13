@@ -92,6 +92,7 @@
           </a>
           <button id="helpBtn" class="btn">Help & Instructions</button>
           <button id="aboutBtn" class="btn">About</button>
+          <button id='settingsBtn' class="btn">Settings</button>
         </div>
 
         <div style="margin-top:10px" class="muted">Avengement stems from a game mechanic in the game.</div>
@@ -123,7 +124,7 @@
         <div class="help-sections">
           <div class="help-section">
             <h4>1. Theme & Goal</h4>
-            <p class="help-list">Each player commands three champions. The central Dragon (boss) roams the field.</p>
+            <p class="help-list">Each player commands three champions. The central Dragon (boss) roams the field</p>
           </div>
 
           <div class="help-section">
@@ -139,10 +140,11 @@
           <div class="help-section">
             <h4>3. Turn Structure</h4>
             <ul class="help-list">
-              <li>Players take turns. On your turn you may move any of your pieces while you have AP.</li>
-              <li>Each move (to any adjacent square, including diagonals) costs 1 AP.</li>
-              <li>Click "End Turn" when finished — the turn does not end automatically.</li>
-              <li>Unmoved friendly pieces refund 1 AP back into your pool when you press End Turn (pool capped at 6).</li>
+              <li>Players take turns. On your turn you may move any of your pieces while you have AP as well as utilize abilites while you have AP.</li>
+              <li>Each move (to any adjacent square, including diagonals) costs 1 AP generally.</li>
+              <li>Abilities per champion vary depending on the the power of them.</li>
+              <li>Start the game by selecting 3 champions per player and placing them in the available start row. Each turn, click on any champion piece and use AP to move or attack.</li>
+              <li>Unmoved friendly pieces refund 1 AP back into your pool when you press End Turn  by Resting(pool capped at 6).</li>
             </ul>
           </div>
 
@@ -150,8 +152,8 @@
             <h4>4. Movement & Combat</h4>
             <ul class="help-list">
               <li>Movement: 8-directional adjacency allowed (N, S, E, W and diagonals).</li>
-              <li>There is no direct attack in this demo; interactions can be expanded later.</li>
-              <li>Dragon movement is triggered by rolling a die at end of each turn.</li>
+              <li>Attacking is based on abilites per champion, and range / AP depends on the ability</li>
+              <li>Dragon movement is triggered by rolling a die at end of each turn which either causes the dragon to move, heal, or attack</li>
             </ul>
           </div>
 
@@ -159,9 +161,9 @@
             <h4>5. The Dragon</h4>
             <ul class="help-list">
               <li>At the end of each turn a 1–6 roll occurs.</li>
-              <li>Roll 1: Dragon attempts to move 3 squares up. 2: right. 3: left. 4: down. 5–6: no move.</li>
-              <li>If the Dragon would land on a unit, it attempts to redirect that unit to an adjacent free cell. If no free space exists the Dragon stops.</li>
-              <li>Dragon has an HP bar (20). Future versions may let pieces damage the dragon.</li>
+              <li>Roll 1: Dragon attempts to move 3 squares up. 2: right. 3: left. 4: down. 5: heal 3, 6: deal 3 to all adjacent square.</li>
+              <li>If the Dragon would land on a unit, it attempts to redirect that unit to an adjacent free cell while also dealing 3 damage. If no free space exists the Dragon stops.</li>
+              <li>Dragon has an HP bar (20).</li>
             </ul>
           </div>
 
@@ -172,7 +174,7 @@
               <div class="sigil"><span class="icon enemy">E</span> Enemy piece — controlled by Player 2</div>
               <div class="sigil"><span class="icon boss">🐉</span> Dragon — boss (HP displayed)</div>
             </div>
-            <div class="help-quick">AP caps at 6. Use End Turn to bank AP from unmoved units. Move costs 1 AP per adjacent step (including diagonals).</div>
+            <div class="help-quick">AP caps at 6. Use End Turn to bank AP from unmoved units.</div>
           </div>
         </div>
 
@@ -186,7 +188,7 @@
     <!-- About screen -->
     <section id="screen-about" class="screen card">
       <h2>About</h2>
-      <p>Avengement — classroom prototype. Built with vanilla HTML/CSS/JS. Host on Live Server, Glitch, or GitHub Pages.</p>
+      <p>Avengement — a PvP board game in which 2 players select 3 class pieces to use in a battle against each other.</p>
     </section>
 
 
