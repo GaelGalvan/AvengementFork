@@ -14,8 +14,8 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
   // players
   const player = {
-    ally: {hpTotal:0, hpCurrent:0, ap:3, segmentIndex:3, lastHit:null, prevSegmentIndex:3},
-    enemy:{hpTotal:0, hpCurrent:0, ap:3, segmentIndex:3, lastHit:null, prevSegmentIndex:3}
+    ally: {hpTotal:0, hpCurrent:0, ap:3, segmentIndex:3, lastHit:null, prevSegmentIndex:3, dragonBuff:false},
+    enemy:{hpTotal:0, hpCurrent:0, ap:3, segmentIndex:3, lastHit:null, prevSegmentIndex:3, dragonBuff:false}
   };
 
   // runtime
@@ -31,10 +31,11 @@ document.addEventListener('DOMContentLoaded', ()=>{
   let strengthPending = null; // { attackerId, targetId } when Strength can be used
   
   // Ranger Focused Stance state
-  let focusedRangerId = null; // id of ranger with focused stance active this turn
+  let focusedRangers = { ally: null, enemy: null }; // ids of rangers with focused stance active this turn, per player
 
   // Dragon displacement state
   let dragonDisplacingPiece = null; // { targetId, originR, originC } when Dragon displaces a piece
+  let firebreathHitTargets = []; // Track pieces hit by Firebreath for threshold removal choice
 
   // Universal mechanics state
   let removedChampions = { ally: [], enemy: [] }; // Track removed pieces for revival
@@ -61,6 +62,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
 
   const hpAllyEl = document.getElementById('hpAlly');
   const hpEnemyEl = document.getElementById('hpEnemy');
+  const hpDragonEl = document.getElementById('hpDragon');
   const apAllyEl = document.getElementById('apAlly');
   const apEnemyEl = document.getElementById('apEnemy');
 
@@ -73,6 +75,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
   const btnPassive = document.getElementById('btnA1');
   const btnAbility = document.getElementById('btnA2');
   const btnUltimate = document.getElementById('btnA3');
+  const btnFirebreath = document.getElementById('btnFirebreath');
   const btnRest = document.getElementById('btnRest');
   const btnEndTurn = document.getElementById('btnEndTurn');
   const bullInput = document.getElementById('bullInput');
@@ -96,6 +99,13 @@ document.addEventListener('DOMContentLoaded', ()=>{
   
   const revivalPrompt = document.getElementById('revivalPrompt');
   const revivalChoices = document.getElementById('revivalChoices');
+  const thresholdRemovalPrompt = document.getElementById('thresholdRemovalPrompt');
+  const thresholdRemovalStatus = document.getElementById('thresholdRemovalStatus');
+  
+  const gameOverPrompt = document.getElementById('gameOverPrompt');
+  const gameOverMessage = document.getElementById('gameOverMessage');
+  const btnPlayAgain = document.getElementById('btnPlayAgain');
+  const btnMainMenu = document.getElementById('btnMainMenu');
 
   /* ---------- strength passive handlers ---------- */
   btnStrengthYes.addEventListener('click', ()=>{
@@ -118,6 +128,15 @@ document.addEventListener('DOMContentLoaded', ()=>{
     strengthPending = null;
     strengthPrompt.style.display = 'none';
     log('Strength not used.');
+  });
+
+  /* ---------- game over handlers ---------- */
+  btnPlayAgain.addEventListener('click', ()=>{
+    restartGame();
+  });
+
+  btnMainMenu.addEventListener('click', ()=>{
+    returnToMainMenu();
   });
 
   /* ---------- revival handlers ---------- */
@@ -206,6 +225,89 @@ document.addEventListener('DOMContentLoaded', ()=>{
     
     // Check if crossing another threshold UP (multiple threshold crossings)
     checkSegmentation(playerKey);
+  }
+
+  function showThresholdRemovalPrompt(playerKey){
+    thresholdRemovalPrompt.style.display = '';
+    thresholdRemovalStatus.innerHTML = '';
+    const playerName = playerKey === 'ally' ? 'Player 1' : 'Player 2';
+    const statusDiv = document.createElement('div');
+    statusDiv.style.fontSize = '12px';
+    statusDiv.textContent = `${playerName}: Click on a highlighted piece to eliminate it.`;
+    thresholdRemovalStatus.appendChild(statusDiv);
+  }
+
+  function hideThresholdRemovalPrompt(){
+    thresholdRemovalPrompt.style.display = 'none';
+    thresholdRemovalStatus.innerHTML = '';
+  }
+
+  function showGameOverPrompt(losingPlayerKey){
+    const winnerName = losingPlayerKey === 'ally' ? 'Player 2' : 'Player 1';
+    const loserName = losingPlayerKey === 'ally' ? 'Player 1' : 'Player 2';
+    gameOverMessage.textContent = `${winnerName} wins! ${loserName} has been eliminated.`;
+    gameOverPrompt.style.display = '';
+    phase = 'gameover';
+  }
+
+  function checkGameLoss(playerKey){
+    const aliveCount = setupPlaced[playerKey].filter(id => pieces[id]).length;
+    if(aliveCount === 0){
+      log(`${playerKey === 'ally' ? 'Player 1' : 'Player 2'} has been eliminated!`);
+      showGameOverPrompt(playerKey);
+    }
+  }
+
+  function hideGameOverPrompt(){
+    gameOverPrompt.style.display = 'none';
+  }
+
+  function restartGame(){
+    hideGameOverPrompt();
+    // Reset all game state
+    emptyGrid();
+    phase = 'setup';
+    setupTurn = 'ally';
+    setupPlaced = { ally: [], enemy: [] };
+    selectedChampionType = 'fighter';
+    selectedId = null;
+    activeAction = null;
+    bullSpend = 1;
+    pendingRestRewards = {};
+    strengthPending = null;
+    focusedRangerId = null;
+    dragonDisplacingPiece = null;
+    firebreathHitTargets = [];
+    removedChampions = { ally: [], enemy: [] };
+    pendingRemovalChoice = null;
+    pendingRevival = null;
+    lungingState = null;
+    lungingLocked = {};
+    thresholdRemovalPending = null;
+    pausedByThresholdChoice = false;
+    focusedRangers = { ally: null, enemy: null };
+    currentStepIndex = 0;
+    currentActor = null;
+    
+    // Reset player stats
+    player.ally = {hpTotal: 0, hpCurrent: 0, ap: 3, segmentIndex: 3, lastHit: null, prevSegmentIndex: 3, dragonBuff: false};
+    player.enemy = {hpTotal: 0, hpCurrent: 0, ap: 3, segmentIndex: 3, lastHit: null, prevSegmentIndex: 3, dragonBuff: false};
+    
+    renderInitial();
+    log('Game restarted.');
+  }
+
+  function returnToMainMenu(){
+    hideGameOverPrompt();
+    window.location.href = 'index.html';
+  }
+
+  function applyDragonVictoryBuff(victoryPlayerKey){
+    player[victoryPlayerKey].dragonBuff = true;
+    player[victoryPlayerKey].hpCurrent = Math.min(player[victoryPlayerKey].hpTotal, player[victoryPlayerKey].hpCurrent + 3);
+    player[victoryPlayerKey].ap = Math.min(MAX_AP, player[victoryPlayerKey].ap + 3);
+    const playerName = victoryPlayerKey === 'ally' ? 'Player 1' : 'Player 2';
+    log(`${playerName} has slain the Dragon! Gained Firebreath ability, +3 HP, and +3 AP!`);
   }
 
   /* ---------- helpers ---------- */
@@ -311,6 +413,16 @@ document.addEventListener('DOMContentLoaded', ()=>{
         btnUltimate.textContent = 'Focused Assault (Ultimate)';
       }
     }
+    
+    // Show Firebreath button if player has the buff
+    if(btnFirebreath){
+      if(player[p.player].dragonBuff && p.champion !== 'dragon'){
+        btnFirebreath.style.display = '';
+      } else {
+        btnFirebreath.style.display = 'none';
+      }
+    }
+    
     // Rest always available if not acted or rested
     if (!p.rested && !p.acted) btnRest.style.display = '';
   }
@@ -377,6 +489,15 @@ document.addEventListener('DOMContentLoaded', ()=>{
     hpEnemyEl.textContent = `${player.enemy.hpCurrent} / ${player.enemy.hpTotal || 0}`;
     apAllyEl.textContent = `${player.ally.ap}`;
     apEnemyEl.textContent = `${player.enemy.ap}`;
+    
+    // Display Dragon HP
+    if(dragonId && pieces[dragonId]){
+      const dragon = pieces[dragonId];
+      hpDragonEl.textContent = `${dragon.currentHp || dragon.maxHp} / ${dragon.maxHp}`;
+    } else {
+      hpDragonEl.textContent = '—';
+    }
+    
     phaseLabel.textContent = `Phase: ${phase}`;
     turnLabel.textContent = currentActor ? `Turn: ${currentActor === 'ally' ? 'Player 1' : (currentActor === 'enemy' ? 'Player 2' : 'Dragon')}` : 'Turn: —';
     if(selectedId && pieces[selectedId]){ selName.textContent = selectedId + ' (' + (pieces[selectedId].champion||pieces[selectedId].name) + ')'; selHP.textContent = hpOf(pieces[selectedId]); }
@@ -465,7 +586,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
     } 
   }
 
-  function clearActionState(){ activeAction = null; bullSpend = 1; bullInput.value = 1; clearHighlights(); }
+  function clearActionState(){ activeAction = null; bullSpend = 1; bullInput.value = 1; clearHighlights(); focusedRangers = { ally: null, enemy: null }; }
 
   /* ---------- highlight helpers ---------- */
   function highlightMovesFor(id){ clearHighlights(); const p = pieces[id]; const range = (p.move !== undefined) ? p.move : 1; for(let r=0;r<ROWS;r++) for(let c=0;c<COLS;c++){ if(grid[r][c] === null && isQueenAccessible(p.r,p.c,r,c,range)){ const el = boardEl.querySelector(`.cell[data-r="${r}"][data-c="${c}"]`); if(el) el.classList.add('move'); } } }
@@ -488,8 +609,9 @@ document.addEventListener('DOMContentLoaded', ()=>{
     log(`DEBUG: resolveActionOn called with r=${r}, c=${c}, activeAction=${activeAction}, selectedId=${selectedId}`);
     
     // For displacement actions, selectedId might be null (we're clicking on empty square)
+    // For threshold removal, selectedId might be null (we're clicking on a piece to remove)
     // For other actions, we need a selected piece
-    if(activeAction !== 'dragon-displace' && activeAction !== 'strength-displace'){
+    if(activeAction !== 'dragon-displace' && activeAction !== 'strength-displace' && activeAction !== 'threshold-removal-choice'){
       const p = pieces[selectedId];
       if(!p){ clearActionState(); return; }
     }
@@ -808,8 +930,10 @@ document.addEventListener('DOMContentLoaded', ()=>{
       const deciderIsAttacker = thresholdRemovalPending.decider === thresholdRemovalPending.attackerId;
       
       if(deciderIsPlayer){
-        // Defender is choosing
-        if(currentActor !== thresholdRemovalPending.playerKey){
+        // Defender is choosing - they always have priority regardless of whose turn it is
+        // The clicked piece should belong to the defending player
+        const clickedPiece = pieces[clickedId];
+        if(!clickedPiece || clickedPiece.player !== thresholdRemovalPending.playerKey){
           log('Only the defending player can choose which piece is removed.');
           return;
         }
@@ -829,16 +953,63 @@ document.addEventListener('DOMContentLoaded', ()=>{
       const playerKey = thresholdRemovalPending.playerKey;
       const attackerId = thresholdRemovalPending.attackerId;
       const targetIndex = thresholdRemovalPending.targetIndex;
-      const finalIndex = thresholdRemovalPending.finalIndex;
+      const piecesToRemove = thresholdRemovalPending.piecesToRemove;
       thresholdRemovalPending = null;
       
-      // Update segment to the actual final segment (where we ended up)
-      player[playerKey].segmentIndex = finalIndex;
+      // Check if player is eliminated (no pieces left)
+      const remainingCount = setupPlaced[playerKey].filter(id => pieces[id]).length;
+      if(remainingCount === 0){
+        checkGameLoss(playerKey);
+        hideThresholdRemovalPrompt();
+        clearActionState();
+        render();
+        return;
+      }
       
-      // After attacker's choice, removal is complete
-      // The hit piece + chosen piece removal satisfies the threshold crossing requirement
-      clearActionState();
-      render();
+      // Update segment to the target index (one threshold processed)
+      player[playerKey].segmentIndex = targetIndex;
+      
+      // Clear Firebreath hit targets after threshold removal
+      firebreathHitTargets = [];
+      
+      // After removing a piece, check if we still need to remove more for this threshold
+      // We only continue prompting if we haven't removed enough pieces yet
+      const remainingPiecesNeeded = targetIndex; // Minimum pieces for target segment
+      const stillNeedsRemoval = remainingCount > remainingPiecesNeeded;
+      
+      if(stillNeedsRemoval){
+        // Still need to remove another piece to reach target segment
+        log(`Still need to remove ${remainingCount - remainingPiecesNeeded} more piece(s) to reach segment ${targetIndex}.`);
+        hideThresholdRemovalPrompt();
+        clearActionState();
+        render();
+        
+        // Recursively prompt for removal of the next piece
+        checkSegmentation(playerKey, attackerId);
+      } else {
+        // Done with this threshold
+        log(`Threshold removal complete for segment ${targetIndex}.`);
+        hideThresholdRemovalPrompt();
+        clearActionState();
+        render();
+        
+        // Check if we need to process additional thresholds due to HP drop
+        const hpTotal = player[playerKey].hpTotal || 0;
+        const hpSeg = Math.floor(hpTotal / 3);
+        const hpCur = player[playerKey].hpCurrent;
+        let actualNewIndex = 3;
+        if(hpCur <= hpSeg) actualNewIndex = 1;
+        else if(hpCur <= hpSeg * 2) actualNewIndex = 2;
+        else actualNewIndex = 3;
+        
+        log(`DEBUG: After threshold removal, actual segment is ${actualNewIndex}, target was ${targetIndex}.`);
+        
+        // If there's still a gap between target and actual, continue processing
+        if(targetIndex > actualNewIndex){
+          log(`DEBUG: Additional threshold crossing needed (${targetIndex} > ${actualNewIndex}).`);
+          checkSegmentation(playerKey, attackerId);
+        }
+      }
       return;
     }
 
@@ -910,6 +1081,9 @@ document.addEventListener('DOMContentLoaded', ()=>{
       log(`${attackerId} did ${dmg} to Dragon (HP ${target.currentHp})`); 
       if(target.currentHp <= 0){ 
         log('Dragon died!'); 
+        // Apply victory buff to the attacker's team
+        const victoryPlayer = pieces[attackerId].player;
+        applyDragonVictoryBuff(victoryPlayer);
         deletePiece(target.id); 
       } 
       return; 
@@ -918,14 +1092,25 @@ document.addEventListener('DOMContentLoaded', ()=>{
     target.currentHp = (target.currentHp || target.maxHp) - dmg; 
     player[target.player].hpCurrent = Math.max(0, player[target.player].hpCurrent - dmg); 
     player[target.player].lastHit = attackerId; 
+    
+    // Clamp piece HP to minimum 0 (don't let it go negative for display purposes)
+    if(target.currentHp < 0) target.currentHp = 0;
+    
     log(`${attackerId} hit ${targetId} for ${dmg}. ${targetId} HP=${target.currentHp}. Owner pool ${player[target.player].hpCurrent}`); 
     
-    if(target.currentHp <= 0){ 
+    // Only delete individual pieces if they took lethal damage AND it's a targeted attack (not AOE)
+    // For AOE attacks like Firebreath, let checkSegmentation handle piece deletion via threshold crossing
+    const isAOE = attackerId && pieces[attackerId] && pieces[attackerId].champion === 'dragon';
+    
+    if(target.currentHp <= 0 && !isAOE){ 
       log(`${targetId} died.`); 
       deletePiece(targetId); 
       player[target.player].ap = Math.min(MAX_AP, player[target.player].ap + 1); 
       log(`${target.player === 'ally' ? 'Player1' : 'Player2'} gained +1 AP (Avengement).`); 
-    } 
+    }
+    // For AOE attacks, the piece survives at 0 HP until threshold crossing is checked
+    // The threshold crossing will handle piece deletion
+    
     checkSegmentation(target.player, attackerId, targetId); 
   }
 
@@ -961,6 +1146,14 @@ document.addEventListener('DOMContentLoaded', ()=>{
     if(player[playerKey].segmentIndex === undefined) player[playerKey].segmentIndex = 3;
     
     const cur = player[playerKey].hpCurrent;
+    
+    // Check if HP has reached 0 (game over condition)
+    if(cur <= 0){
+      log(`${playerKey === 'ally' ? 'Player 1' : 'Player 2'} HP has reached 0!`);
+      checkGameLoss(playerKey);
+      return;
+    }
+    
     let newIndex = 3; // Default to full health segment
     
     // Determine which segment the player is in based on current HP
@@ -973,6 +1166,12 @@ document.addEventListener('DOMContentLoaded', ()=>{
     
     // CROSSING DOWN: Handle one threshold crossing at a time
     if(newIndex < oldIndex){ 
+      // If we're already waiting for a threshold removal choice, don't set up another one
+      if(activeAction === 'threshold-removal-choice'){
+        log('DEBUG: Already waiting for threshold removal choice, skipping additional check.');
+        return;
+      }
+      
       // Process only the next immediate threshold (oldIndex - 1)
       const targetIndex = oldIndex - 1;
       const eligible = setupPlaced[playerKey].filter(id => pieces[id]);
@@ -980,6 +1179,19 @@ document.addEventListener('DOMContentLoaded', ()=>{
       if(eligible.length === 0){
         log('No more pieces to remove.');
         player[playerKey].segmentIndex = newIndex;
+        // Check if player is eliminated (no pieces left)
+        checkGameLoss(playerKey);
+        return;
+      }
+      
+      // IMPORTANT: Check if piece removal is actually required
+      // Segments require minimum piece counts:
+      // Segment 3: 3+ pieces, Segment 2: 2+ pieces, Segment 1: 1+ piece
+      const piecesRequiredForTarget = targetIndex; // targetIndex 1, 2, or 3 = required pieces
+      if(eligible.length <= piecesRequiredForTarget){
+        log(`DEBUG: Already at minimum pieces for segment ${targetIndex} (${eligible.length} pieces, ${piecesRequiredForTarget} required). No removal needed.`);
+        player[playerKey].segmentIndex = targetIndex;
+        render();
         return;
       }
       
@@ -989,6 +1201,13 @@ document.addEventListener('DOMContentLoaded', ()=>{
         deletePiece(eligible[0]);
         player[playerKey].segmentIndex = targetIndex;
         
+        // Check if player is eliminated (no pieces left)
+        const remainingCount = setupPlaced[playerKey].filter(id => pieces[id]).length;
+        if(remainingCount === 0){
+          checkGameLoss(playerKey);
+          return;
+        }
+        
         // Recursively check for next threshold
         if(targetIndex > newIndex){
           checkSegmentation(playerKey, attackerId);
@@ -997,8 +1216,18 @@ document.addEventListener('DOMContentLoaded', ()=>{
       }
       
       // Multiple eligible pieces
-      // Calculate HP that needs to be removed: current total - remaining HP
-      const hpToRemove = total - cur;
+      // Calculate how many pieces need to be removed to reach targetIndex
+      const piecesToRemove = eligible.length - targetIndex;
+      
+      if(piecesToRemove <= 0){
+        // No pieces actually need to be removed to reach target segment
+        log(`DEBUG: No pieces need removal to reach segment ${targetIndex} (have ${eligible.length}, need ${targetIndex})`);
+        player[playerKey].segmentIndex = targetIndex;
+        render();
+        return;
+      }
+      
+      log(`Threshold crossed. ${piecesToRemove} piece(s) must be removed to reach segment ${targetIndex}.`);
       
       // The hit target may already be dead (removed during applyDamage)
       // So we ask the attacker to choose which other piece gets removed
@@ -1009,23 +1238,34 @@ document.addEventListener('DOMContentLoaded', ()=>{
       const decider = isDragonAttack ? playerKey : attackerId;
       const deciderName = isDragonAttack ? (playerKey === 'ally' ? 'Player 1' : 'Player 2') : (attacker ? attacker.id : 'Damage dealer');
       
-      log(`Threshold crossed. ${deciderName}: Click on a highlighted piece to remove it.`);
+      // For Firebreath (AOE from Dragon), restrict choices to pieces that were actually hit
+      let choicePieces = eligible;
+      if(isDragonAttack && firebreathHitTargets.length > 0){
+        choicePieces = eligible.filter(id => firebreathHitTargets.includes(id));
+        if(choicePieces.length === 0) choicePieces = eligible; // Fallback if no hit targets match
+      }
+      
+      log(`${deciderName}: Click on a highlighted piece to remove it (need to remove ${piecesToRemove} total).`);
       
       thresholdRemovalPending = {
         playerKey,
         attackerId: attackerId,
-        eligibleVictims: eligible,
+        eligibleVictims: choicePieces,
         decider: decider,
         targetIndex: targetIndex,
         finalIndex: newIndex,
-        hpToRemove: hpToRemove
+        piecesToRemove: piecesToRemove
       };
       
       activeAction = 'threshold-removal-choice';
       render();
       
+      // Show the threshold removal prompt to make it clear what the player needs to do
+      showThresholdRemovalPrompt(playerKey);
+      
       clearHighlights();
-      eligible.forEach(id => {
+      log(`DEBUG: Highlighting choicePieces: ${JSON.stringify(choicePieces)}`);
+      choicePieces.forEach(id => {
         const p = pieces[id];
         if(inBounds(p.r, p.c)){
           const cell = boardEl.querySelector(`.cell[data-r="${p.r}"][data-c="${p.c}"]`);
@@ -1112,7 +1352,7 @@ document.addEventListener('DOMContentLoaded', ()=>{
       player[p.player].ap -= 1;
       p.acted = true;
       p.focused = true;
-      focusedRangerId = p.id;
+      focusedRangers[p.player] = p.id;
       log(`${p.id} used Focused Stance (1 AP). Next turn all ability ranges will be doubled!`);
       clearActionState();
       render();
@@ -1181,6 +1421,37 @@ document.addEventListener('DOMContentLoaded', ()=>{
         clearActionState();
         render();
       }
+    });
+
+    btnFirebreath.addEventListener('click', ()=>{
+      if(!selectedId){ log('Select a piece first'); return; }
+      const p = pieces[selectedId];
+      if(p.player !== currentActor){ log('Not current actor piece'); return; }
+      if(p.rested){ log('This piece is rested'); return; }
+      if(!player[p.player].dragonBuff){ log('Your team does not have Firebreath ability'); return; }
+      
+      // Firebreath: 1 AP, 3 dmg to all adjacent enemies (from Dragon buff)
+      if(player[p.player].ap < 1){ log('Not enough AP for Firebreath'); return; }
+      player[p.player].ap -= 1;
+      const adj = getAdjIds(p.r, p.c);
+      let hit = false;
+      const hitTargets = [];
+      adj.forEach(tid => {
+        if(tid && pieces[tid] && pieces[tid].player !== p.player){
+          hitTargets.push(tid);
+          applyDamage(p.id, tid, 3);
+          hit = true;
+        }
+      });
+      if(hit){
+        log(`${p.id} used Firebreath (3 dmg to all adjacent enemies)`);
+        firebreathHitTargets = hitTargets;
+      } else {
+        log('No adjacent enemies for Firebreath.');
+      }
+      p.acted = true;
+      clearActionState();
+      render();
     });
   }
 
@@ -1274,9 +1545,22 @@ document.addEventListener('DOMContentLoaded', ()=>{
       boss.currentHp = Math.min(20, boss.currentHp + 3); 
       log('Dragon rested for 3 HP'); 
     } else { 
+      // Firebreath: 3 dmg to all adjacent enemies
       const adj = getAdjIds(boss.r,boss.c); 
-      adj.forEach(tid => { if(tid && pieces[tid] && pieces[tid].player !== 'boss') applyDamage(boss.id, tid, 3); }); 
-      log('Dragon used Firebreath (3 dmg to all adjacent)'); 
+      const hitTargets = [];
+      adj.forEach(tid => { 
+        if(tid && pieces[tid] && pieces[tid].player !== 'boss'){
+          hitTargets.push(tid);
+          applyDamage(boss.id, tid, 3);
+        }
+      });
+      if(hitTargets.length > 0){
+        log('Dragon used Firebreath (3 dmg to all adjacent)');
+        // Store hit targets so threshold removal can restrict choices to damaged pieces
+        firebreathHitTargets = hitTargets;
+      } else {
+        log('No adjacent enemies for Firebreath.');
+      }
     } 
     // Safety check: ensure Dragon still exists before rendering
     if(!pieces[dragonId]){ 
@@ -1396,10 +1680,10 @@ document.addEventListener('DOMContentLoaded', ()=>{
             p.acted = false;
           }
           // Apply focused state if this ranger was set to focus last turn
-          if(focusedRangerId === id && p.champion === 'ranger'){
+          if(focusedRangers[playerKey] === id && p.champion === 'ranger'){
             p.focused = true;
             log(`${p.id} is focused! Ability ranges are doubled this turn.`);
-            focusedRangerId = null;
+            focusedRangers[playerKey] = null;
           } else {
             p.focused = false;
           }
@@ -1424,10 +1708,14 @@ document.addEventListener('DOMContentLoaded', ()=>{
         bossAct();
         
         // AUTO-ADVANCE: After Dragon finishes its action, automatically advance to next turn
-        // (unless there's a pending displacement or revival that requires player input)
+        // (unless there's a pending displacement, threshold removal, or revival that requires player input)
         setTimeout(()=>{
           if(activeAction === 'dragon-displace'){
             log('Dragon displacement pending — waiting for player choice...');
+            return;
+          }
+          if(activeAction === 'threshold-removal-choice'){
+            log('Threshold removal choice pending — waiting for player choice...');
             return;
           }
           if(pendingRevival){
@@ -1456,10 +1744,10 @@ document.addEventListener('DOMContentLoaded', ()=>{
                   p.acted = false;
                 }
                 // Apply focused state if this ranger was set to focus last turn
-                if(focusedRangerId === id && p.champion === 'ranger'){
+                if(focusedRangers[playerKey] === id && p.champion === 'ranger'){
                   p.focused = true;
                   log(`${p.id} is focused! Ability ranges are doubled this turn.`);
-                  focusedRangerId = null;
+                  focusedRangers[playerKey] = null;
                 } else {
                   p.focused = false;
                 }
