@@ -130,6 +130,28 @@
 
   <aside class="sidebar" id="rightSidebar">
     <h1>Class Card</h1>
+    <div class="panel" style="margin-top:8px">
+      <strong>AI Controls</strong>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+        <select id="aiActor">
+          <option value="ally">Player 1 (Ally)</option>
+          <option value="enemy">Player 2 (Enemy)</option>
+        </select>
+        <input id="aiIterations" type="number" value="40" min="4" style="width:80px"/>
+        <button id="btnAIMove" class="small">AI Suggest & Play</button>
+      </div>
+      <div id="aiStatus" class="muted" style="margin-top:8px;font-size:13px">Ready</div>
+    </div>
+    <div class="panel" style="margin-top:8px">
+      <strong>AI vs AI Demo</strong>
+      <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
+        <input id="aiVsAIIterations" type="number" value="20" min="4" style="width:60px"/>
+        <button id="btnAIVsAIStart" class="small">Start Demo</button>
+        <button id="btnAIVsAIPause" class="small" style="display:none;background:#ff6b6b">Pause</button>
+      </div>
+      <div id="aiVsAIStatus" class="muted" style="margin-top:8px;font-size:12px;min-height:30px;line-height:1.4">Ready</div>
+      <div id="aiVsAILog" class="log" style="margin-top:8px;min-height:80px;max-height:120px;font-size:11px;overflow-y:auto;white-space:pre-wrap;word-break:break-word"></div>
+    </div>
     <div id="cardContainer" style="display:flex;flex-direction:column;gap:12px">
       <div class="panel" style="text-align:center">
         <div id="cardTitle" class="muted" style="font-size:14px">Select a piece to view details</div>
@@ -190,5 +212,332 @@
 <script src="scripts/game/champions/bossDragon.js"></script>
 <script src="scripts/game/utils.js"></script>
 <script src="scripts/game/app.js"></script>
+<script>
+// Minimal Monte-Carlo evaluator that uses GameAPI to simulate actions and apply the best one.
+(() => {
+  function deepClone(obj){ return JSON.parse(JSON.stringify(obj)); }
+
+  function scoreStateForActor(state, actor){
+    const opponent = actor === 'ally' ? 'enemy' : 'ally';
+    const myHp = (state.player && state.player[actor] && state.player[actor].hpCurrent) || 0;
+    const oppHp = (state.player && state.player[opponent] && state.player[opponent].hpCurrent) || 0;
+    const myPieces = Object.values(state.pieces).filter(p=>p.player===actor).length;
+    const oppPieces = Object.values(state.pieces).filter(p=>p.player===opponent).length;
+    const myTotalHp = Object.values(state.pieces).filter(p=>p.player===actor).reduce((sum,p)=>(sum + (p.currentHp||0)), 0);
+    const oppTotalHp = Object.values(state.pieces).filter(p=>p.player===opponent).reduce((sum,p)=>(sum + (p.currentHp||0)), 0);
+    
+    // Primary objective: eliminate all enemy pieces (huge bonus for piece elimination)
+    const pieceDiff = myPieces - oppPieces;
+    
+    // Secondary objectives: maximize own piece count and health
+    const score = 
+      pieceDiff * 100 +           // piece elimination is the main goal
+      oppTotalHp * (-5) +         // heavily penalize leaving enemies alive
+      myTotalHp * 1 +             // slight bonus for keeping own pieces healthy
+      (myHp - oppHp) * 0.5 +      // minor player HP difference
+      (myPieces > 0 ? 10 : -500); // massive penalty for losing all pieces
+    
+    return score;
+  }
+
+  function applyActionToState(state, action){
+    // Mutate the passed state snapshot
+    if(action.type === 'move'){
+      const p = state.pieces[action.pieceId]; if(!p) return;
+      state.grid[p.r][p.c] = null; p.r = action.to.r; p.c = action.to.c; state.grid[p.r][p.c] = p.id;
+      if(p.player && p.player !== 'boss' && state.player && state.player[p.player]) state.player[p.player].ap = Math.max(0, state.player[p.player].ap - 1);
+      return;
+    }
+    if(action.type === 'strike'){
+      const attacker = state.pieces[action.attacker]; const target = state.pieces[action.target]; if(!attacker || !target) return;
+      if(attacker.player && attacker.player !== 'boss' && state.player && state.player[attacker.player]) state.player[attacker.player].ap = Math.max(0, state.player[attacker.player].ap - 1);
+      target.currentHp = (target.currentHp || target.maxHp) - 2;
+      if(target.player !== 'boss' && state.player && state.player[target.player]) state.player[target.player].hpCurrent = Math.max(0, state.player[target.player].hpCurrent - 2);
+      // Optional displacement in simulation
+      if(action.displaceTo && state.pieces[target.id]){
+        const dr = action.displaceTo.r, dc = action.displaceTo.c;
+        if(dr>=0 && dr<state.grid.length && dc>=0 && dc<state.grid[0].length && state.grid[dr][dc] === null){ state.grid[target.r][target.c] = null; target.r = dr; target.c = dc; state.grid[dr][dc] = target.id; }
+      }
+      if(target.currentHp <= 0){ // remove piece
+        state.grid[target.r][target.c] = null; delete state.pieces[target.id]; state.setupPlaced[target.player] = state.setupPlaced[target.player].filter(x=>x!==target.id);
+      }
+      return;
+    }
+    if(action.type === 'quick'){
+      const attacker = state.pieces[action.attacker]; const target = state.pieces[action.target]; if(!attacker || !target) return;
+      if(attacker.player && attacker.player !== 'boss' && state.player && state.player[attacker.player]) state.player[attacker.player].ap = Math.max(0, state.player[attacker.player].ap - 1);
+      target.currentHp = (target.currentHp || target.maxHp) - 1;
+      if(target.player !== 'boss' && state.player && state.player[target.player]) state.player[target.player].hpCurrent = Math.max(0, state.player[target.player].hpCurrent - 1);
+      if(target.currentHp <= 0){ state.grid[target.r][target.c] = null; delete state.pieces[target.id]; state.setupPlaced[target.player] = state.setupPlaced[target.player].filter(x=>x!==target.id); }
+      return;
+    }
+    if(action.type === 'rest'){
+      const p = state.pieces[action.pieceId]; if(!p) return; // apply rest rewards immediately for simplicity
+      if(state.player && state.player[p.player]){
+        state.player[p.player].ap = Math.min(6, (state.player[p.player].ap||0) + 1);
+        state.player[p.player].hpCurrent = Math.min(state.player[p.player].hpTotal||0, (state.player[p.player].hpCurrent||0) + 1);
+      }
+      return;
+    }
+    if(action.type === 'bullseye'){
+      const attacker = state.pieces[action.attacker]; const target = state.pieces[action.target]; if(!attacker || !target) return; const spend = Math.max(1, Math.min(action.spend||1, (state.player && state.player[attacker.player] && state.player[attacker.player].ap) || 0)); if(attacker.player && attacker.player !== 'boss' && state.player && state.player[attacker.player]) state.player[attacker.player].ap = Math.max(0, (state.player[attacker.player]&&state.player[attacker.player].ap) - spend); target.currentHp = (target.currentHp || target.maxHp) - (2 * spend); if(target.player !== 'boss' && state.player && state.player[target.player]) state.player[target.player].hpCurrent = Math.max(0, state.player[target.player].hpCurrent - (2 * spend)); if(target.currentHp <= 0){ state.grid[target.r][target.c] = null; delete state.pieces[target.id]; state.setupPlaced[target.player] = state.setupPlaced[target.player].filter(x=>x!==target.id); } return; }
+    if(action.type === 'lunging'){
+      const attacker = state.pieces[action.attacker]; if(!attacker) return; if(state.player && state.player[attacker.player]) state.player[attacker.player].ap = Math.max(0, state.player[attacker.player].ap - 3);
+      // Hit adjacent for 2 dmg
+      const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]];
+      const adj = [];
+      for(const d of dirs){ const nr=attacker.r+d[0], nc=attacker.c+d[1]; if(nr>=0 && nr<state.grid.length && nc>=0 && nc<state.grid[0].length && state.grid[nr][nc]) adj.push(state.grid[nr][nc]); }
+      adj.forEach(tid=>{ const tgt = state.pieces[tid]; if(tgt){ tgt.currentHp = (tgt.currentHp||tgt.maxHp) - 2; if(tgt.player !== 'boss' && state.player && state.player[tgt.player]) state.player[tgt.player].hpCurrent = Math.max(0, state.player[tgt.player].hpCurrent - 2); } });
+      // Optionally displace surviving targets to a random adjacent empty tile
+      for(const tid of adj){ const tgt = state.pieces[tid]; if(tgt && tgt.currentHp > 0){ const empties = []; for(const d of dirs){ const tr = tgt.r + d[0], tc = tgt.c + d[1]; if(tr>=0 && tr<state.grid.length && tc>=0 && tc<state.grid[0].length && state.grid[tr][tc] === null) empties.push({r:tr,c:tc}); } if(empties.length>0){ const choice = empties[Math.floor(Math.random()*empties.length)]; state.grid[tgt.r][tgt.c] = null; tgt.r = choice.r; tgt.c = choice.c; state.grid[choice.r][choice.c] = tgt.id; } }
+      }
+      // Allow up to 3 random adjacent moves for attacker
+      for(let m=0;m<3;m++){ const empties = []; for(const d of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]){ const nr=attacker.r+d[0], nc=attacker.c+d[1]; if(nr>=0 && nr<state.grid.length && nc>=0 && nc<state.grid[0].length && state.grid[nr][nc] === null) empties.push({r:nr,c:nc}); } if(empties.length===0) break; const ch = empties[Math.floor(Math.random()*empties.length)]; state.grid[attacker.r][attacker.c] = null; attacker.r = ch.r; attacker.c = ch.c; state.grid[ch.r][ch.c] = attacker.id; }
+      return;
+    }
+    if(action.type === 'endTurn'){
+      // Simplified: rotate actor order ally->boss->enemy->boss; if boss, simulate boss action immediately
+      if(state.currentActor === 'ally') state.currentActor = 'boss';
+      else if(state.currentActor === 'boss') state.currentActor = 'enemy';
+      else if(state.currentActor === 'enemy') state.currentActor = 'boss';
+      // If we moved into boss, process a sampled boss action
+      if(state.currentActor === 'boss'){
+        // sample d6
+        const v = Math.floor(Math.random()*6)+1;
+        if(v >=1 && v <=4){
+          // move by direction mapping
+          const map = {1:[-1,0],2:[0,1],3:[0,-1],4:[1,0]};
+          const [dr,dc] = map[v];
+          const boss = state.pieces[state.dragonId];
+          if(boss){
+            let finalR = boss.r, finalC = boss.c; let moved=0;
+            for(let step=0; step<3; step++){ let nr = finalR+dr, nc = finalC+dc; if(nr<0||nr>=state.grid.length||nc<0||nc>=state.grid[0].length){ break; } finalR=nr; finalC=nc; moved++; }
+            if(moved>0){ const targetId = state.grid[finalR][finalC]; if(targetId && state.pieces[targetId] && targetId !== state.dragonId){ // displace target: remove from grid only
+              const tgt = state.pieces[targetId]; state.grid[tgt.r][tgt.c] = null; // the player will place it; simulate a penalty: 3 damage
+              tgt.currentHp = (tgt.currentHp||tgt.maxHp) - 3; if(tgt.player !== 'boss' && state.player && state.player[tgt.player]) state.player[tgt.player].hpCurrent = Math.max(0, state.player[tgt.player].hpCurrent - 3); if(tgt.currentHp<=0){ delete state.pieces[targetId]; state.setupPlaced[tgt.player]=state.setupPlaced[tgt.player].filter(x=>x!==targetId); }
+              }
+              // move boss
+              state.grid[boss.r][boss.c] = null; boss.r = finalR; boss.c = finalC; state.grid[boss.r][boss.c] = boss.id;
+            }
+          }
+        } else if(v === 5){ const boss = state.pieces[state.dragonId]; if(boss) boss.currentHp = Math.min(boss.maxHp, (boss.currentHp||boss.maxHp) + 3); }
+        else { // firebreath 6
+          const boss = state.pieces[state.dragonId]; if(boss){ const dirs = [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]; dirs.forEach(d=>{ const nr=boss.r+d[0], nc=boss.c+d[1]; if(nr>=0&&nr<state.grid.length&&nc>=0&&nc<state.grid[0].length){ const tid=state.grid[nr][nc]; if(tid && state.pieces[tid] && state.pieces[tid].player !== 'boss'){ state.pieces[tid].currentHp = (state.pieces[tid].currentHp||state.pieces[tid].maxHp)-3; if(state.player && state.player[state.pieces[tid].player]) state.player[state.pieces[tid].player].hpCurrent = Math.max(0, state.player[state.pieces[tid].player].hpCurrent - 3); if(state.pieces[tid].currentHp<=0){ delete state.pieces[tid]; state.grid[nr][nc]=null; state.setupPlaced[ state.pieces[tid]?.player ] = (state.setupPlaced[ state.pieces[tid]?.player ] || []).filter(x=>x!==tid); } } } }); }
+        }
+        // advance from boss
+        state.currentActor = (state.currentActor === 'boss') ? 'enemy' : state.currentActor;
+      }
+      return;
+    }
+  }
+
+  function monteCarloEvaluateAction(rootState, action, actor, playouts){
+    let total = 0;
+    for(let i=0;i<playouts;i++){
+      const s = deepClone(rootState);
+      // apply chosen action
+      applyActionToState(s, action);
+      // random playout with preference for offensive actions
+      let depth = 0; const MAX_DEPTH = 12;
+      while(depth < MAX_DEPTH){
+        // terminal if one side has no pieces
+        const allyCount = Object.values(s.pieces).filter(p=>p.player==='ally').length;
+        const enemyCount = Object.values(s.pieces).filter(p=>p.player==='enemy').length;
+        if(allyCount===0 || enemyCount===0) break;
+        // pick legal action for the current actor, with bias toward offensive moves
+        const current = s.currentActor || actor;
+        const actions = window.GameAPI.enumerateActionsForState(s, current);
+        if(!actions || actions.length===0) break;
+        
+        // Categorize actions: attacks (strike, quick, bullseye, lunging) vs other
+        const attackActions = actions.filter(a => ['strike','quick','bullseye','lunging'].includes(a.type));
+        const otherActions = actions.filter(a => !['strike','quick','bullseye','lunging'].includes(a.type));
+        
+        // Select action: 70% chance to pick an attack if available, 30% pick randomly
+        let selectedAction;
+        if(attackActions.length > 0 && Math.random() < 0.7){
+          selectedAction = attackActions[Math.floor(Math.random()*attackActions.length)];
+        } else {
+          selectedAction = actions[Math.floor(Math.random()*actions.length)];
+        }
+        
+        applyActionToState(s, selectedAction);
+        depth++;
+      }
+      total += scoreStateForActor(s, actor);
+    }
+    return total / Math.max(1, playouts);
+  }
+
+  async function findBestAction(iterations, actor){
+    const root = window.GameAPI.snapshot();
+    // ensure currentActor is set
+    if(!root.currentActor) root.currentActor = actor;
+    
+    // Skip dragon turns — the AI only controls ally and enemy players
+    if(root.currentActor === 'boss') return null;
+    
+    const actions = window.GameAPI.enumerateActionsForState(root, actor);
+    if(!actions || actions.length===0) return null;
+    const perAction = Math.max(1, Math.floor(iterations / actions.length));
+    
+    // Count how many pieces of this actor have already acted
+    const playerPieces = Object.values(root.pieces).filter(p=>p.player===actor);
+    const actedCount = playerPieces.filter(p=>p.acted || p.rested).length;
+    const mostPiecesActed = actedCount >= playerPieces.length * 0.7; // 70%+ have acted
+    
+    let best = null; let bestScore = -Infinity;
+    for(const a of actions){
+      let avg = monteCarloEvaluateAction(root, a, actor, perAction);
+      // Bonus for endTurn action if most pieces have already acted (encourages turn ending)
+      if(a.type === 'endTurn' && mostPiecesActed) avg += 50;
+      // console.log('Action', a, 'score', avg);
+      if(avg > bestScore){ bestScore = avg; best = a; }
+    }
+    return best;
+  }
+
+  document.addEventListener('DOMContentLoaded', ()=>{
+    const btn = document.getElementById('btnAIMove');
+    const status = document.getElementById('aiStatus');
+    btn.addEventListener('click', async ()=>{
+      const actor = document.getElementById('aiActor').value;
+      const iter = parseInt(document.getElementById('aiIterations').value,10) || 20;
+      status.textContent = 'Computing...';
+      try{
+        const best = await findBestAction(iter, actor);
+        if(!best){ status.textContent = 'No legal action found.'; return; }
+        status.textContent = 'Applying: ' + JSON.stringify(best);
+        // Apply to live game
+        const ok = window.GameAPI.applyActionToLive(best);
+        if(!ok) status.textContent = 'AI attempted action but it failed to apply.';
+        else status.textContent = 'Action applied.';
+      } catch(e){ status.textContent = 'Error: '+e.message; console.error(e); }
+      setTimeout(()=>{ status.textContent = 'Ready'; }, 1200);
+    });
+
+    // AI vs AI auto-play demo
+    let aiVsAIRunning = false;
+    let aiVsAIPauseRequested = false;
+    const btnStart = document.getElementById('btnAIVsAIStart');
+    const btnPause = document.getElementById('btnAIVsAIPause');
+    const statusEl = document.getElementById('aiVsAIStatus');
+    const logEl = document.getElementById('aiVsAILog');
+
+    async function runAIVsAI() {
+      aiVsAIRunning = true;
+      aiVsAIPauseRequested = false;
+      btnStart.style.display = 'none';
+      btnPause.style.display = 'inline-block';
+      logEl.innerHTML = '';
+      statusEl.textContent = 'Starting AI vs AI demo...';
+      
+      const iterations = parseInt(document.getElementById('aiVsAIIterations').value, 10) || 20;
+      let moveCount = 0;
+      const MAX_MOVES = 150;
+
+      while(aiVsAIRunning && moveCount < MAX_MOVES) {
+        if(aiVsAIPauseRequested) {
+          statusEl.textContent = '⏸️ Paused';
+          break;
+        }
+
+        // Check game state
+        const snapshot = window.GameAPI.snapshot();
+        const allyCount = Object.values(snapshot.pieces).filter(p=>p.player==='ally').length;
+        const enemyCount = Object.values(snapshot.pieces).filter(p=>p.player==='enemy').length;
+        const dragonDead = !snapshot.pieces[snapshot.dragonId];
+
+        // Terminal conditions
+        if(allyCount === 0 || enemyCount === 0 || dragonDead) {
+          let winner = '';
+          if(dragonDead) winner = '🐉 Dragon defeated!';
+          else if(allyCount === 0) winner = '🔴 Player 2 wins!';
+          else if(enemyCount === 0) winner = '🔵 Player 1 wins!';
+          statusEl.innerHTML = `<strong>✓ Game Over!</strong> ${winner}<br>Moves: ${moveCount}`;
+          aiVsAIRunning = false;
+          btnStart.style.display = 'inline-block';
+          btnPause.style.display = 'none';
+          return;
+        }
+
+        // Determine current actor
+        const actor = snapshot.currentActor || 'ally';
+        const actorDisplay = actor === 'ally' ? '🔵 P1' : (actor === 'enemy' ? '🔴 P2' : '🐉');
+        
+        // If it's the dragon's turn, skip AI control and let the game's built-in dragon handler run
+        if(actor === 'boss') {
+          statusEl.textContent = `Move ${moveCount + 1}: ${actorDisplay} acting automatically...`;
+          // Wait for dragon's auto-action to complete (it has built-in setTimeout delays)
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          moveCount++;
+          continue;
+        }
+        
+        statusEl.textContent = `Move ${moveCount + 1}: ${actorDisplay} acting...`;
+        
+        // Small delay for visual feedback
+        await new Promise(resolve => setTimeout(resolve, 50));
+        
+        try {
+          const best = await findBestAction(iterations, actor);
+          if(!best) {
+            statusEl.innerHTML = `<strong>✗ Error:</strong> No legal action (${moveCount} moves)`;
+            aiVsAIRunning = false;
+            btnStart.style.display = 'inline-block';
+            btnPause.style.display = 'none';
+            return;
+          }
+          
+          const ok = window.GameAPI.applyActionToLive(best);
+          if(!ok) {
+            statusEl.innerHTML = `<strong>✗ Error:</strong> Action failed (${moveCount} moves)`;
+            aiVsAIRunning = false;
+            btnStart.style.display = 'inline-block';
+            btnPause.style.display = 'none';
+            return;
+          }
+          
+          // Log the move
+          const actionType = best.type || 'unknown';
+          const logLine = `${moveCount + 1}. ${actorDisplay} ${actionType}`;
+          logEl.innerHTML += logLine + '\n';
+          logEl.scrollTop = logEl.scrollHeight;
+          moveCount++;
+          
+          // After applying action, wait for game state to update
+          // endTurn actions need more time since they trigger full turn logic
+          const delayTime = (best.type === 'endTurn') ? 600 : 150;
+          await new Promise(resolve => setTimeout(resolve, delayTime));
+          
+        } catch(e) {
+          statusEl.innerHTML = `<strong>✗ Exception:</strong> ${e.message}`;
+          console.error('AI vs AI error:', e);
+          aiVsAIRunning = false;
+          btnStart.style.display = 'inline-block';
+          btnPause.style.display = 'none';
+          return;
+        }
+      }
+
+      if(moveCount >= MAX_MOVES) {
+        statusEl.innerHTML = `<strong>⚠ Limit:</strong> Stopped at ${MAX_MOVES} moves`;
+      }
+
+      aiVsAIRunning = false;
+      btnStart.style.display = 'inline-block';
+      btnPause.style.display = 'none';
+    }
+
+    btnStart.addEventListener('click', async ()=> {
+      await runAIVsAI();
+    });
+
+    btnPause.addEventListener('click', ()=> {
+      aiVsAIPauseRequested = true;
+    });
+  });
+})();
+</script>
 </body>
 </html>
