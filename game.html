@@ -131,25 +131,57 @@
   <aside class="sidebar" id="rightSidebar">
     <h1>Class Card</h1>
     <div class="panel" style="margin-top:8px">
-      <strong>AI Controls</strong>
-      <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
-        <select id="aiActor">
-          <option value="ally">Player 1 (Ally)</option>
-          <option value="enemy">Player 2 (Enemy)</option>
-        </select>
-        <input id="aiIterations" type="number" value="40" min="4" style="width:80px"/>
-        <button id="btnAIMove" class="small">AI Suggest & Play</button>
+      <strong>Single AI Move</strong>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
+        <div style="display:flex;gap:8px;align-items:center">
+          <label class="muted" style="font-size:12px;flex:0 0 70px">Actor:</label>
+          <select id="aiActor" style="flex:1">
+            <option value="ally">🔵 Player 1 (Ally)</option>
+            <option value="enemy">🔴 Player 2 (Enemy)</option>
+          </select>
+        </div>
+        <div style="display:flex;gap:8px;align-items:center">
+          <label class="muted" style="font-size:12px;flex:0 0 70px">Iterations:</label>
+          <input id="aiIterations" type="number" value="40" min="4" style="flex:1"/>
+        </div>
+        <button id="btnAIMove" class="small" style="width:100%;background:#092532;border:1px solid rgba(102,217,255,0.2)">🎯 Suggest & Play</button>
       </div>
-      <div id="aiStatus" class="muted" style="margin-top:8px;font-size:13px">Ready</div>
+      <div id="aiStatus" class="muted" style="margin-top:10px;font-size:12px;text-align:center">Ready</div>
     </div>
+
+    <div class="panel" style="margin-top:8px">
+      <strong>AI Difficulties</strong>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
+        <div style="padding:8px;background:rgba(102,217,255,0.08);border-radius:6px;border-left:3px solid rgba(102,217,255,0.3)">
+          <div class="muted" style="font-size:11px;margin-bottom:4px">🔵 PLAYER 1</div>
+          <select id="aiDifficultyAlly" style="width:100%">
+            <option value="medium">🧠 Medium (MCTS) — Smart adaptive play</option>
+            <option value="easy">🏹 Easy (Rangers) — Bullseye focused</option>
+          </select>
+        </div>
+        <div style="padding:8px;background:rgba(255,155,107,0.08);border-radius:6px;border-left:3px solid rgba(255,155,107,0.3)">
+          <div class="muted" style="font-size:11px;margin-bottom:4px">🔴 PLAYER 2</div>
+          <select id="aiDifficultyEnemy" style="width:100%">
+            <option value="medium">🧠 Medium (MCTS) — Smart adaptive play</option>
+            <option value="easy">🏹 Easy (Rangers) — Bullseye focused</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
     <div class="panel" style="margin-top:8px">
       <strong>AI vs AI Demo</strong>
-      <div style="display:flex;gap:8px;margin-top:8px;align-items:center">
-        <input id="aiVsAIIterations" type="number" value="20" min="4" style="width:60px"/>
-        <button id="btnAIVsAIStart" class="small">Start Demo</button>
-        <button id="btnAIVsAIPause" class="small" style="display:none;background:#ff6b6b">Pause</button>
+      <div style="display:flex;flex-direction:column;gap:10px;margin-top:10px">
+        <div style="display:flex;gap:8px;align-items:center">
+          <label class="muted" style="font-size:12px;flex:0 0 70px">Iterations:</label>
+          <input id="aiVsAIIterations" type="number" value="20" min="4" style="flex:1"/>
+        </div>
+        <div style="display:flex;gap:6px">
+          <button id="btnAIVsAIStart" class="small" style="flex:1;background:#092532;border:1px solid rgba(102,217,255,0.2)">▶ Start Demo</button>
+          <button id="btnAIVsAIPause" class="small" style="flex:1;display:none;background:#ff6b6b;border:1px solid rgba(255,107,107,0.3)">⏸ Pause</button>
+        </div>
       </div>
-      <div id="aiVsAIStatus" class="muted" style="margin-top:8px;font-size:12px;min-height:30px;line-height:1.4">Ready</div>
+      <div id="aiVsAIStatus" class="muted" style="margin-top:10px;font-size:12px;min-height:30px;line-height:1.4;text-align:center">Ready</div>
       <div id="aiVsAILog" class="log" style="margin-top:8px;min-height:80px;max-height:120px;font-size:11px;overflow-y:auto;white-space:pre-wrap;word-break:break-word"></div>
     </div>
     <div id="cardContainer" style="display:flex;flex-direction:column;gap:12px">
@@ -397,15 +429,164 @@
     return best;
   }
 
+  // Easy AI: simple heuristic that prefers rangers and bullseye-focused play
+  async function findBestActionEasy(iterations, actor){
+    const root = window.GameAPI.snapshot();
+    if(!root.currentActor) root.currentActor = actor;
+    if(root.currentActor === 'boss') return null;
+    const actions = window.GameAPI.enumerateActionsForState(root, actor) || [];
+    if(actions.length === 0) return null;
+
+    // helper to get piece by action
+    const getActorPiece = (a) => { const id = a.attacker || a.pieceId || a.attacker; return root.pieces && root.pieces[id]; };
+
+    // Filter actions that originate from ranger pieces
+    const rangerActions = actions.filter(a => {
+      const p = getActorPiece(a);
+      return p && (p.champion === 'ranger' || (p.name && String(p.name).toLowerCase().includes('ranger')));
+    });
+
+    // If we have ranger actions, prioritize bullseye attacks from rangers
+    if(rangerActions.length > 0){
+      const bullActions = rangerActions.filter(a => a.type === 'bullseye');
+      const ap = (root.player && root.player[actor] && root.player[actor].ap) || 0;
+
+      if(bullActions.length > 0){
+        // Prefer bull actions we can afford (or the smallest spend if none affordable)
+        const affordable = bullActions.filter(a => (typeof a.spend === 'undefined') || (a.spend <= ap));
+        const pool = affordable.length > 0 ? affordable : bullActions.slice();
+
+        // Choose bull action that targets the nearest enemy
+        let best = null; let bestDist = Infinity;
+        for(const a of pool){
+          const atk = getActorPiece(a);
+          const tgt = root.pieces && root.pieces[a.target];
+          if(atk && tgt){
+            const d = Math.abs(atk.r - tgt.r) + Math.abs(atk.c - tgt.c);
+            if(d < bestDist){ bestDist = d; best = a; }
+          } else if(!a.target && !best){ best = a; }
+        }
+        if(best) return best;
+      }
+
+      // Otherwise pick strike/quick targeting nearest enemy
+      const attackCandidates = rangerActions.filter(a => ['strike','quick','lunging','bullseye'].includes(a.type));
+      if(attackCandidates.length > 0){
+        let best = null; let bestD = Infinity;
+        for(const a of attackCandidates){
+          const atk = getActorPiece(a);
+          const tgt = root.pieces && root.pieces[a.target];
+          if(atk && tgt){
+            const d = Math.abs(atk.r - tgt.r) + Math.abs(atk.c - tgt.c);
+            if(d < bestD){ bestD = d; best = a; }
+          }
+        }
+        if(best) return best;
+      }
+
+      // If no immediate attack, try moves that get rangers closer to enemies
+      const moveActions = rangerActions.filter(a => a.type === 'move' && a.to);
+      if(moveActions.length > 0){
+        let best = null; let bestScore = -Infinity;
+        const enemies = Object.values(root.pieces).filter(p => p.player && p.player !== actor && p.player !== 'boss');
+        for(const a of moveActions){
+          const atk = root.pieces && root.pieces[a.pieceId]; if(!atk) continue;
+          let minBefore = Infinity, minAfter = Infinity;
+          for(const e of enemies){ const db = Math.abs(atk.r - e.r) + Math.abs(atk.c - e.c); const da = Math.abs(a.to.r - e.r) + Math.abs(a.to.c - e.c); minBefore = Math.min(minBefore, db); minAfter = Math.min(minAfter, da); }
+          const score = (minBefore - minAfter);
+          if(score > bestScore){ bestScore = score; best = a; }
+        }
+        if(best) return best;
+      }
+    }
+
+    // Fallback: if no ranger-focused option, use medium MCTS
+    return await findBestAction(iterations, actor);
+  }
+
+  async function findBestActionForDifficulty(iterations, actor, difficulty){
+    if(difficulty === 'easy') return await findBestActionEasy(iterations, actor);
+    return await findBestAction(iterations, actor);
+  }
+
+  // Build HTML fragment (no <html> wrapper) for inserting into modal
+  function buildBoardFragment(parsed){
+    try{
+      const ROWS = parsed.grid ? parsed.grid.length : 7;
+      const COLS = parsed.grid ? parsed.grid[0].length : 7;
+      const piecesMap = {};
+      if(parsed.p && Array.isArray(parsed.p)){
+        parsed.p.forEach(arr=>{ piecesMap[arr[0]] = { id:arr[0], player:arr[1], champion:arr[2], r:arr[3], c:arr[4], currentHp:arr[5] }; });
+      } else if(parsed.pieces){ for(const id in parsed.pieces){ piecesMap[id] = parsed.pieces[id]; } }
+
+      let html = '';
+      html += `<h2 style="margin:0 0 8px 0">Example Board State</h2>`;
+      html += `<div style="display:flex;gap:12px;align-items:flex-start">`;
+      html += `<div class="modal-board" style="flex:0 0 auto">`;
+      html += `<div class="board" style="display:grid;grid-template-columns:repeat(${COLS},36px);grid-auto-rows:36px;gap:6px">`;
+
+      const grid = (parsed.grid && parsed.grid.map(r=>r.slice())) || Array.from({length:ROWS}, ()=>Array(COLS).fill(null));
+      for(const id  in piecesMap){ const p = piecesMap[id]; if(p && Number.isFinite(p.r) && Number.isFinite(p.c)) grid[p.r][p.c] = id; }
+      for(let r=0;r<ROWS;r++){
+        for(let c=0;c<COLS;c++){
+          const pid = grid[r][c];
+          if(pid && piecesMap[pid]){
+            const p = piecesMap[pid];
+            const cls = p.player === 'ally' ? 'ally' : (p.player === 'enemy' ? 'enemy' : 'boss');
+            const symbol = p.champion === 'ranger' ? '🏹' : (p.champion === 'fighter' ? '⚔' : (p.champion === 'dragon' ? '🐉' : (p.champion||'◼')));
+            html += `<div style="width:36px;height:36px;background:#0f1720;border-radius:6px;display:flex;align-items:center;justify-content:center"><div style="font-size:14px">${symbol}</div></div>`;
+          } else {
+            html += `<div style="width:36px;height:36px;background:rgba(255,255,255,0.01);border-radius:6px"></div>`;
+          }
+        }
+      }
+      html += `</div>`; // board
+      html += `</div>`; // modal-board
+
+      html += `<div style="flex:1;min-width:260px">`;
+      html += `<div style="font-size:13px;color:#9aa8b3;margin-bottom:8px">Actor: ${parsed.actor || parsed.currentActor || '-'} — Players: A(AP:${parsed.players?.ally?.ap||0},HP:${parsed.players?.ally?.hp||parsed.players?.ally?.hpCurrent||0}) | E(AP:${parsed.players?.enemy?.ap||0},HP:${parsed.players?.enemy?.hp||parsed.players?.enemy?.hpCurrent||0})</div>`;
+      html += `<div style="background:rgba(255,255,255,0.02);padding:8px;border-radius:6px;max-height:320px;overflow:auto"><strong>Pieces</strong><ul style="margin:8px 0 0 14px;padding:0;line-height:1.4;color:#e6eef3">`;
+      for(const id in piecesMap){ const p = piecesMap[id]; html += `<li style="margin-bottom:6px">${id} — ${p.champion||p.name||'-'} — ${p.player} — at (${p.r},${p.c}) — HP: ${p.currentHp||p.hp||'-'}</li>`; }
+      html += `</ul></div>`;
+      html += `</div>`; // right col
+      html += `</div>`; // flex
+      return html;
+    }catch(e){ return `<pre>Error rendering state: ${e.message}</pre>`; }
+  }
+
+  // Show modal overlay containing the parsed board state
+  function showStateModal(parsed){
+    try{
+      // create overlay
+      const overlay = document.createElement('div'); overlay.style.position='fixed'; overlay.style.left='0'; overlay.style.top='0'; overlay.style.right='0'; overlay.style.bottom='0'; overlay.style.background='rgba(0,0,0,0.6)'; overlay.style.zIndex='9999'; overlay.style.display='flex'; overlay.style.alignItems='center'; overlay.style.justifyContent='center';
+      const modal = document.createElement('div'); modal.style.width='820px'; modal.style.maxWidth='calc(100% - 40px)'; modal.style.maxHeight='calc(100% - 40px)'; modal.style.background='#071019'; modal.style.border='1px solid rgba(255,255,255,0.04)'; modal.style.padding='14px'; modal.style.borderRadius='10px'; modal.style.boxShadow='0 12px 48px rgba(0,0,0,0.7)'; modal.style.color='#e6eef3'; modal.style.overflow='auto';
+      // header
+      const header = document.createElement('div'); header.style.display='flex'; header.style.justifyContent='space-between'; header.style.alignItems='center'; header.style.marginBottom='8px';
+      const title = document.createElement('div'); title.innerHTML = `<strong>Example Board State</strong>`; header.appendChild(title);
+      const controls = document.createElement('div'); controls.style.display='flex'; controls.style.gap='8px';
+      const btnExport = document.createElement('button'); btnExport.className='small'; btnExport.textContent='Export JSON';
+      btnExport.addEventListener('click', ()=>{ const data = JSON.stringify(parsed, null, 2); const blob = new Blob([data], {type:'application/json'}); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'av_state.json'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); });
+      const btnClose = document.createElement('button'); btnClose.className='small'; btnClose.textContent='Close'; btnClose.addEventListener('click', ()=>{ overlay.remove(); });
+      controls.appendChild(btnExport); controls.appendChild(btnClose); header.appendChild(controls);
+
+      modal.appendChild(header);
+      const body = document.createElement('div'); body.innerHTML = buildBoardFragment(parsed);
+      modal.appendChild(body);
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+    }catch(e){ alert('Failed to open modal: '+e.message); console.warn(e); }
+  }
+
   document.addEventListener('DOMContentLoaded', ()=>{
     const btn = document.getElementById('btnAIMove');
     const status = document.getElementById('aiStatus');
     btn.addEventListener('click', async ()=>{
       const actor = document.getElementById('aiActor').value;
       const iter = parseInt(document.getElementById('aiIterations').value,10) || 20;
+      const difficulty = (actor === 'ally') ? document.getElementById('aiDifficultyAlly').value : document.getElementById('aiDifficultyEnemy').value;
       status.textContent = 'Computing...';
       try{
-        const best = await findBestAction(iter, actor);
+        const best = await findBestActionForDifficulty(iter, actor, difficulty);
         if(!best){ status.textContent = 'No legal action found.'; return; }
         status.textContent = 'Applying: ' + JSON.stringify(best);
         // Apply to live game
@@ -503,6 +684,7 @@
 
         // Determine current actor
         const actor = snapshot.currentActor || 'ally';
+          const difficulty = (actor === 'ally') ? document.getElementById('aiDifficultyAlly').value : document.getElementById('aiDifficultyEnemy').value;
         const actorDisplay = actor === 'ally' ? '🔵 P1' : (actor === 'enemy' ? '🔴 P2' : '🐉');
 
         // If it's the dragon's turn, skip AI control and let the game's built-in dragon handler run
@@ -520,7 +702,7 @@
         await new Promise(resolve => setTimeout(resolve, 50));
         
         try {
-          const best = await findBestAction(iterations, actor);
+          const best = await findBestActionForDifficulty(iterations, actor, difficulty);
           if(!best) {
             statusEl.innerHTML = `<strong>✗ Error:</strong> No legal action (${moveCount} moves)`;
             aiVsAIRunning = false;
