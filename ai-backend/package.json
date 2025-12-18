@@ -1,0 +1,28 @@
+{
+  "name": "avengement-ai-backend",
+  "version": "1.0.0",
+  "description": "LLM-powered AI opponent for Avengement game using Ollama",
+  "main": "ollamaServer.js",
+  "type": "module",
+  "scripts": {
+    "start": "node ollamaServer.js",
+    "dev": "node ollamaServer.js"
+  },
+  "keywords": [
+    "game",
+    "ai",
+    "ollama",
+    "llm",
+    "avengement"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.18.2",
+    "node-fetch": "^3.3.2"
+  },
+  "engines": {
+    "node": ">=14.0.0"
+  }
+}

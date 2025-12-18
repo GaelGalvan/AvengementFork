@@ -116,8 +116,28 @@
     </div>
 
     <div class="panel">
-      <strong>Game Log</strong>
+      <div style="display:flex;justify-content:space-between;align-items:center">
+        <strong>Game Log</strong>
+        <span id="aiStatus" class="muted" style="font-size:12px">🔴 AI Offline</span>
+      </div>
       <div class="log" id="log"></div>
+    </div>
+
+    <div class="panel">
+      <strong style="color:#66d9ff">LLM AI Suggestions</strong>
+      <p class="muted" style="font-size:12px;margin-bottom:8px">Get AI recommendations for your moves</p>
+      <div style="display:flex;gap:8px;flex-direction:column">
+        <button id="btnAISuggest" class="small" style="width:100%;background:#092532;color:#66d9ff;border:1px solid rgba(102,217,255,0.3)">💡 Get AI Suggestion</button>
+        <div id="aiSuggestionBox" style="display:none;background:rgba(102,217,255,0.1);padding:8px;border-radius:6px;border-left:3px solid #66d9ff;font-size:12px">
+          <div style="color:#66d9ff;font-weight:bold;margin-bottom:4px">AI Suggests:</div>
+          <div id="aiSuggestionText" class="muted" style="margin-bottom:6px">—</div>
+          <div id="aiReasoningText" class="muted" style="font-size:11px;color:#9aa8b3;line-height:1.4">—</div>
+        </div>
+        <div style="display:flex;gap:6px;align-items:center;font-size:12px">
+          <span class="muted">Status:</span>
+          <span id="aiStatus2" style="flex:1;color:#9aa8b3">🔴 AI Offline</span>
+        </div>
+      </div>
     </div>
   </aside>
 
@@ -189,6 +209,10 @@
 <script src="scripts/game/champions/ranger.js"></script>
 <script src="scripts/game/champions/bossDragon.js"></script>
 <script src="scripts/game/utils.js"></script>
+<script src="scripts/game/boardState.js"></script>
+<script src="scripts/game/gameManager.js"></script>
+<script src="scripts/game/boardStateAnalyzer.js"></script>
+<script src="scripts/game/aiOpponent.js"></script>
 <script src="scripts/game/app.js"></script>
 </body>
 </html>

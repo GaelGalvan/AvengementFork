@@ -1771,6 +1771,108 @@ document.addEventListener('DOMContentLoaded', ()=>{
     }
   });
 
+  /* ---------- AI opponent controls ---------- */
+  const btnAISuggest = document.getElementById('btnAISuggest');
+  const aiSuggestionBox = document.getElementById('aiSuggestionBox');
+  const aiSuggestionText = document.getElementById('aiSuggestionText');
+  const aiReasoningText = document.getElementById('aiReasoningText');
+  const aiStatusSpan = document.getElementById('aiStatus');
+
+  if (btnAISuggest) {
+    btnAISuggest.addEventListener('click', async () => {
+      if (!window.AIOpponent || !window.AIOpponent.enabled) {
+        aiSuggestionText.textContent = 'AI offline - start backend server';
+        aiSuggestionBox.style.display = 'block';
+        return;
+      }
+
+      // Get currently selected piece
+      if (!selectedId) {
+        aiSuggestionText.textContent = 'Please select a piece first';
+        aiReasoningText.textContent = '';
+        aiSuggestionBox.style.display = 'block';
+        return;
+      }
+
+      const piece = pieces[selectedId];
+      if (!piece) {
+        aiSuggestionText.textContent = 'No piece selected';
+        aiReasoningText.textContent = '';
+        aiSuggestionBox.style.display = 'block';
+        return;
+      }
+
+      // Compute valid moves using in-game rules (queen-like up to piece.move)
+      const range = (typeof piece.move === 'number') ? piece.move : 1;
+      const validMoves = [];
+      for (let rr = 0; rr < ROWS; rr++) {
+        for (let cc = 0; cc < COLS; cc++) {
+          if (grid[rr][cc] === null && isQueenAccessible(piece.r, piece.c, rr, cc, range)) {
+            // Use [x,y] = [col,row]
+            validMoves.push([cc, rr]);
+          }
+        }
+      }
+      if (!validMoves || validMoves.length === 0) {
+        aiSuggestionText.textContent = 'No valid moves available';
+        aiReasoningText.textContent = '';
+        aiSuggestionBox.style.display = 'block';
+        return;
+      }
+
+      // Request AI suggestion
+      btnAISuggest.disabled = true;
+      btnAISuggest.textContent = '⚔️ Analyzing combat...';
+      aiSuggestionBox.style.display = 'block';
+      aiSuggestionText.textContent = 'Checking for attack opportunities...';
+      aiReasoningText.textContent = '';
+
+      try {
+        const aiMove = await window.AIOpponent.findBestMove(piece, validMoves, grid);
+        if (aiMove && aiMove.move) {
+          const [x, y] = aiMove.move;
+          
+          // Display action type (attack vs move)
+          if (aiMove.action === 'attack' && aiMove.ability) {
+            aiSuggestionText.textContent = `⚔️ Use ${aiMove.ability} on enemy at (${x}, ${y})`;
+          } else if (aiMove.action === 'attack') {
+            aiSuggestionText.textContent = `⚔️ Attack enemy at (${x}, ${y})`;
+          } else {
+            aiSuggestionText.textContent = `🔵 Move to (${x}, ${y})`;
+          }
+          
+          aiReasoningText.textContent = aiMove.reasoning || 'Strategic action recommended';
+        } else {
+          aiSuggestionText.textContent = 'Could not determine best action';
+          aiReasoningText.textContent = 'Try again or make your own decision';
+        }
+      } catch (error) {
+        aiSuggestionText.textContent = 'Error getting suggestion';
+        aiReasoningText.textContent = error.message;
+        console.error('AI suggestion error:', error);
+      } finally {
+        btnAISuggest.disabled = false;
+        btnAISuggest.textContent = '💡 Get AI Suggestion';
+      }
+    });
+  }
+
+  // Update AI status indicator
+  const updateAIStatus = () => {
+    const s1 = aiStatusSpan;
+    const s2 = document.getElementById('aiStatus2');
+    if (!window.AIOpponent) return;
+    const text = window.AIOpponent.thinking
+      ? '🟡 AI Thinking...'
+      : (window.AIOpponent.enabled ? '🟢 AI Ready' : '🔴 AI Offline');
+    if (s1) s1.textContent = text;
+    if (s2) s2.textContent = text;
+  };
+
+  // Poll status every second
+  setInterval(updateAIStatus, 1000);
+  updateAIStatus();
+
   /* ---------- utility / init ---------- */
   function renderInitial(){ emptyGrid(); render(); log('Loaded. Place champions for Player 1 then Player 2.'); finishBtn.disabled = true; }
   renderInitial();

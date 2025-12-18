@@ -1,12 +1,13 @@
-// gameManager.js — basic turn manager and demo setup
+// gameManager.js — basic turn manager and demo setup with LLM AI
 (function(){
 const GM = {
 currentPlayer: 1,
 players: {
-1: {ap:3, hp:0, pieces:[]},
-2: {ap:3, hp:0, pieces:[]}
+1: {ap:3, hp:0, pieces:[], isAI: false},
+2: {ap:3, hp:0, pieces:[], isAI: false}
 },
 boss: null,
+aiDifficulty: 'medium',
 init: function(){
 this.reset();
 },
@@ -40,12 +41,80 @@ this.players[2].hp = f2.maxHp + r2.maxHp;
 document.getElementById('turnIndicator').textContent = 'Current: Player 1';
 if(window.BoardUI) window.BoardUI.redraw();
 },
+
+/**
+ * Enable/disable AI for a player
+ */
+setPlayerAI: function(playerNum, enabled) {
+this.players[playerNum].isAI = enabled;
+console.log(`Player ${playerNum} AI: ${enabled ? 'ON' : 'OFF'}`);
+},
+
+/**
+ * Get AI-recommended move for current piece
+ */
+getAIMove: async function(piece) {
+if (!window.AIOpponent || !window.AIOpponent.enabled) {
+return null;
+}
+
+const validMoves = piece.validMoves ? piece.validMoves(window.BoardState) : [];
+if (validMoves.length === 0) return null;
+
+try {
+const result = await window.AIOpponent.findBestMove(piece, validMoves);
+return result;
+} catch (error) {
+console.error('AI move evaluation failed:', error);
+return null;
+}
+},
+
+/**
+ * Execute AI turn
+ */
+executeAITurn: async function() {
+const player = this.players[this.currentPlayer];
+if (!player.isAI) return false;
+
+console.log(`[AI Turn] Player ${this.currentPlayer} is thinking...`);
+const pieces = player.pieces.filter(p => p.currentHp > 0);
+
+if (pieces.length === 0) return false;
+
+for (const piece of pieces) {
+const validMoves = piece.validMoves ? piece.validMoves(window.BoardState) : [];
+if (validMoves.length > 0) {
+try {
+const aiResult = await this.getAIMove(piece);
+if (aiResult && aiResult.move) {
+const [toX, toY] = aiResult.move;
+window.BoardState.movePiece(piece.x, piece.y, toX, toY);
+console.log(`[AI] ${piece.name} moved to (${toX},${toY})`);
+console.log(`Reasoning: ${aiResult.reasoning}`);
+}
+} catch (error) {
+console.error(`AI error for ${piece.name}:`, error);
+}
+}
+}
+
+// End AI turn
+this.endTurn();
+return true;
+},
+
 endTurn: function(){
 // swap players and have boss take a trivial turn
 this.currentPlayer = this.currentPlayer === 1 ? 2 : 1;
 document.getElementById('turnIndicator').textContent = `Current: Player ${this.currentPlayer}`;
 if(this.boss && this.boss.takeTurn) this.boss.takeTurn(window.BoardState);
 if(window.BoardUI) window.BoardUI.redraw();
+
+// If new player is AI, execute AI turn
+if (this.players[this.currentPlayer].isAI) {
+setTimeout(() => this.executeAITurn(), 1000);
+}
 }
 };
 
